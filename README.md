@@ -78,7 +78,11 @@ const hook = {
 
 ### 调试源码
 
+> https://www.twotwoba.site/blog/frame/react-source-debug
+
 1. 根据文档教程，先构建完包，react内link一下，再去cra项目中link下你构建完的17版的包即可
+  - yarn安装依赖坑
+    - 需要node14版本+java-jdk环境
 2. 新脚手架用得react18语法，所以改成17的语法就行
 
 ### 概念经验
@@ -155,6 +159,79 @@ commit阶段（`commitRoot`）
 
 #### ReactDOM.render流程
 
+1. 创建fiberRootNode和rootFiber和初始化UpdateQueue
+2. 创建Update对象，并赋值给rootFiber.updateQueue,来触发一次更新
+3. 从fiber到root
+4. 调度更新
+5. render阶段
+6. commit阶段
+
+#### this.setState
+1. this.setState内会调用this.updater.enqueueSetState
+2. 方法内部：创建Update对象，并赋值给rootFiber.updateQueue,来触发一次更新
+3. 从fiber到root
+4. 调度更新
+5. render阶段
+6. commit阶段
+
+### Hooks
+
+#### 极简useState-hook的实现
+
+```js
+/**
+ * 大体思路
+ * 1. 通过一些途径产生更新，更新会造成组件render
+ * 2. 组件render时useState返回的num为更新后的结果。
+ */
+function useState(initialState) {
+  // 当前useState使用的hook会被赋值该该变量
+  let hook;
+
+  if (isMount) {
+    // ...mount时需要生成hook对象
+  } else {
+    // ...update时从workInProgressHook中取出该useState对应的hook
+  }
+
+  let baseState = hook.memoizedState;
+  if (hook.queue.pending) {
+    // ...根据queue.pending中保存的update更新state
+  }
+  hook.memoizedState = baseState;
+
+  return [baseState, dispatchAction.bind(null, hook.queue)];
+}
+```
+
+fiber的结构上有一个memoizedState属性，用来存放hooks链表（存放不同hook产生的hook对象）
+每个链节点即hook对象上有一个memoizedState属性，用来存放hook的待更新的计算state
+
+- 确定Update与queue队列存放位置的对象的数据结构
+  - 类组件中updateQueue队列存放在实例里的，hook组件中UpdateQueue队列直接存放在hook对象上，hook对象以链表形式存放在当前fiber节点中。
+    - hook对象：包含pending属性update链表和 memoizedState(计算后将要更新的state)属性
+  - hook与Update关系区别
+    - 每个useState等hook就对应一个hook对象，用来存该hook的Update链表（相当于类组件中固定的setState这个全局hook对象）
+- dispatchAction方法：模拟react调度更新流程
+  - 过workInProgressHook变量指向当前正在工作的hook
+  - 触发组件render
+- 组件render时，再次执行useState方法，并计算最新的state值返回
+
+#### hooks的数据结构
+
+```js
+const hook: Hook = {
+  memoizedState: null,
+
+  baseState: null,
+  baseQueue: null,
+  queue: null,
+
+  next: null,
+};
+```
+
+#### useState的实际流程
 
 ## react16版本对比
 
