@@ -62,6 +62,15 @@ const fakeCallbackNode = {};
 // Except for NoPriority, these correspond to Scheduler priorities. We use
 // ascending numbers so we can compare them like numbers. They start at 90 to
 // avoid clashing with Scheduler's priorities.
+/**
+ * 6大优先级定义：会按照优先级调度执行
+ImmediatePriority：值为 99，表示立即执行的最高优先级。
+UserBlockingPriority：值为 98，表示用户阻塞优先级，通常用于处理用户交互。
+NormalPriority：值为 97，表示正常优先级，用于常规的更新任务。
+LowPriority：值为 96，表示低优先级，用于不太紧急的任务。
+IdlePriority：值为 95，表示空闲优先级，用于在浏览器空闲时执行的任务。
+NoPriority：值为 90，表示没有优先级，通常用于表示没有特定优先级的任务。
+ */
 export const ImmediatePriority: ReactPriorityLevel = 99;
 export const UserBlockingPriority: ReactPriorityLevel = 98;
 export const NormalPriority: ReactPriorityLevel = 97;
@@ -90,6 +99,11 @@ const initialTimeMs: number = Scheduler_now();
 export const now =
   initialTimeMs < 10000 ? Scheduler_now : () => Scheduler_now() - initialTimeMs;
 
+/**
+ * 获取当前的调度优先级，并将其映射到 React 内部使用的优先级
+ * 
+ * 默认正常ReactDOM.render时 调度优先级为normal类型 返回97
+ */
 export function getCurrentPriorityLevel(): ReactPriorityLevel {
   switch (Scheduler_getCurrentPriorityLevel()) {
     case Scheduler_ImmediatePriority:
@@ -141,21 +155,33 @@ export function scheduleCallback(
   return Scheduler_scheduleCallback(priorityLevel, callback, options);
 }
 
+/**
+ * 链接调度器：将传入的callback同步回调任务队列送到Scheduler_scheduleCallback调度器进行调度。
+ * 
+ * 这个队列会在下一个 tick 或者在调用 flushSyncCallbackQueue 时被刷新
+ * @param {*} callback 需要调度的同步回调函数
+ * @returns 
+ */
 export function scheduleSyncCallback(callback: SchedulerCallback) {
   // Push this callback into an internal queue. We'll flush these either in
   // the next tick, or earlier if something calls `flushSyncCallbackQueue`.
+  // 检查同步队列是否为空
   if (syncQueue === null) {
+    // 初始化同步队列
     syncQueue = [callback];
     // Flush the queue in the next tick, at the earliest.
+    // 调度刷新队列的任务
+    // 调度一个高优先级的任务，该任务将在下一个 tick 中执行 flushSyncCallbackQueueImpl 函数，以刷新同步队列。
     immediateQueueCallbackNode = Scheduler_scheduleCallback(
       Scheduler_ImmediatePriority,
       flushSyncCallbackQueueImpl,
     );
   } else {
-    // Push onto existing queue. Don't need to schedule a callback because
-    // we already scheduled one when we created the queue.
+    // 如果 syncQueue 已经存在，直接将新的回调函数添加到现有的队列中。
+    // 不需要再次调度刷新队列的任务，因为已经在初始化队列时调度过了
     syncQueue.push(callback);
   }
+  // 返回一个虚拟的回调节点 fakeCallbackNode。这个节点通常用于内部跟踪或其他目的
   return fakeCallbackNode;
 }
 
@@ -174,6 +200,9 @@ export function flushSyncCallbackQueue() {
   flushSyncCallbackQueueImpl();
 }
 
+/**
+ * 使用 runWithPriority 函数以最高优先级 ImmediatePriority 执行回调队列中的所有回调
+ */
 function flushSyncCallbackQueueImpl() {
   if (!isFlushingSyncQueue && syncQueue !== null) {
     // Prevent re-entrancy.

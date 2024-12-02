@@ -1773,6 +1773,9 @@ export const ContextOnlyDispatcher: Dispatcher = {
   unstable_isNewReconciler: enableNewReconciler,
 };
 
+/**
+ * 在真实的Hooks中，组件mount时的hook与update时的hook来源于不同的对象，这类对象在源码中被称为dispatcher
+ */
 const HooksDispatcherOnMount: Dispatcher = {
   readContext,
 
@@ -1794,6 +1797,9 @@ const HooksDispatcherOnMount: Dispatcher = {
   unstable_isNewReconciler: enableNewReconciler,
 };
 
+/**
+ * 在真实的Hooks中，组件mount时的hook与update时的hook来源于不同的对象，这类对象在源码中被称为dispatcher
+ */
 const HooksDispatcherOnUpdate: Dispatcher = {
   readContext,
 

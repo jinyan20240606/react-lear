@@ -130,6 +130,11 @@ if (__DEV__) {
   didWarnAboutFindNodeInStrictMode = {};
 }
 
+/**
+ * 从父组件中提取当前的上下文信息，并根据需要进行处理
+ * @param {*} parentComponent 
+ * @returns 返回上下文对象
+ */
 function getContextForSubtree(
   parentComponent: ?React$Component<any, any>,
 ): Object {
@@ -137,7 +142,9 @@ function getContextForSubtree(
     return emptyContextObject;
   }
 
+  // 获取react组件的fiber节点对象
   const fiber = getInstance(parentComponent);
+  // 获取父组件上下文对象
   const parentContext = findCurrentUnmaskedContext(fiber);
 
   if (fiber.tag === ClassComponent) {
@@ -238,6 +245,7 @@ function findHostInstanceWithWarning(
   return findHostInstance(component);
 }
 
+/** 创建和初始化一个新的 fiberRoot 根实例，并给current初始化一个rootFiber节点 */
 export function createContainer(
   containerInfo: Container,
   tag: RootTag,
@@ -247,6 +255,28 @@ export function createContainer(
   return createFiberRoot(containerInfo, tag, hydrate, hydrationCallbacks);
 }
 
+/**
+ * ReactDOM.render的核心渲染方法
+ * 
+ * 主要是把rootFiber根fiber节点填充好update负载和lane通道，以调用 scheduleUpdateOnFiber 调度更新方法
+ * * * 负载就是当前传入的reactElement元素树，后面调度渲染它
+ * 
+ * **核心步骤：**
+ * 1. 填充rootFiber节点属性：
+ *    - 请求一个当前更新通道lane和填充payload负载
+ *    - 创建update更新对象并添加到fiber节点的updateQueue队列
+ * 2. 把rootFiber根节点传入 -----> 统一调度更新scheduleUpdateOnFiber---- 触发fiberRoot管理的调度更新流程
+ *    1. 由current向上追溯到根节点，标记更新通道lane
+ *    2. fiberRoot调度器：ensureRootIsScheduled(root, eventTime) => 调度核心perform[Sync|Concurrent]WorkOnRoot(root)回调任务;
+ *    3. 调度pendingInteractions：schedulePendingInteractions(root, lane);
+ * 
+ * @param {*} element 要渲染的 React 元素
+ * @param {*} container React 容器根节点 ==> fiberRoot
+ * @param {*} parentComponent 父组件，可选
+ * @param {*} callback 回调
+ * @returns Lane 此次更新通道（二进制数值类型）
+ *  
+ */
 export function updateContainer(
   element: ReactNodeList,
   container: OpaqueRoot,
@@ -256,7 +286,9 @@ export function updateContainer(
   if (__DEV__) {
     onScheduleRoot(container, element);
   }
+  /** 获取当前的 rootFiber 根 节点 */
   const current = container.current;
+  // 记录当前事件时间戳
   const eventTime = requestEventTime();
   if (__DEV__) {
     // $FlowExpectedError - jest isn't a global, and isn't recognized outside of tests
@@ -265,12 +297,15 @@ export function updateContainer(
       warnIfNotScopedWithMatchingAct(current);
     }
   }
+  // 请求一个更新优先级通道：用于区分不同优先级更新----用于此次更新请求在调度器中工作循环中的执行优先级
   const lane = requestUpdateLane(current);
 
+  // 性能分析相关
   if (enableSchedulingProfiler) {
     markRenderScheduled(lane);
   }
 
+  // 设置上下文
   const context = getContextForSubtree(parentComponent);
   if (container.context === null) {
     container.context = context;
@@ -295,11 +330,11 @@ export function updateContainer(
     }
   }
 
+  // 创建update更新对象
   const update = createUpdate(eventTime, lane);
-  // Caution: React DevTools currently depends on this property
-  // being called "element".
   update.payload = {element};
 
+  // 处理回调函数 => 设置到更新update对象中
   callback = callback === undefined ? null : callback;
   if (callback !== null) {
     if (__DEV__) {
@@ -314,9 +349,12 @@ export function updateContainer(
     update.callback = callback;
   }
 
+  // 将当前创建的update对象添加当前fiber节点的updateQueue队列中
   enqueueUpdate(current, update);
+  // 统一调度更新
   scheduleUpdateOnFiber(current, lane, eventTime);
 
+  // 返回此次的更新通道
   return lane;
 }
 

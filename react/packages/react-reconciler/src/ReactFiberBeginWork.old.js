@@ -231,12 +231,25 @@ if (__DEV__) {
   didWarnAboutDefaultPropsOnFunctionComponent = {};
 }
 
+/**
+ * diff子树: 将current.child与nextChildren的diff结果即新fiber树赋值到 workInProgress.child 属性（child值就是App起始的fiber树了）
+ * 
+ * 目前workInProgress是新建的，还没有child值，diff对比就是为了填充其child值，形成一个完整的AB双缓存树
+ * 
+ * 1. mount环境：调用mountChildFibers
+ * 2. update环境：调用reconcileChildFibers
+ * @param {*} current 上次渲染的页面真实rootFiber根节点
+ * @param {*} workInProgress WIP的rootFiber副本节点
+ * @param {*} nextChildren 要更新的react元素子树
+ * @param {*} renderLanes  
+ */
 export function reconcileChildren(
   current: Fiber | null,
   workInProgress: Fiber,
   nextChildren: any,
   renderLanes: Lanes,
 ) {
+  // 处理初次渲染的 mount 情况
   if (current === null) {
     // If this is a fresh new component that hasn't been rendered yet, we
     // won't update its child set by applying minimal side-effects. Instead,
@@ -248,7 +261,9 @@ export function reconcileChildren(
       nextChildren,
       renderLanes,
     );
-  } else {
+  }
+  // update 情况
+  else {
     // If the current child is the same as the work in progress, it means that
     // we haven't yet started any work on these children. Therefore, we use
     // the clone algorithm to create a copy of all the current children.
@@ -1050,8 +1065,20 @@ function pushHostRootContext(workInProgress) {
   pushHostContainer(workInProgress, root.containerInfo);
 }
 
+/**
+ * beginWork--switch--HostRoot分支实际方法
+ * 1. processUpdateQueue：计算workInProgress.updateQueue要更新workInProgress.memoizedState值
+ * 2. reconcileChildren：协调diff对比 children子树
+ * 
+ * @param {*} current 上次渲染的页面真实rootFiber根节点
+ * @param {*} workInProgress 正在处理的rootFiber副本节点----双缓存流程
+ * @param {*} renderLanes 当前渲染优先级通道
+ * @returns  返回 workInProgress.child 即新子fiber树 
+ */
 function updateHostRoot(current, workInProgress, renderLanes) {
+  // 推送根上下文：将根上下文推送到上下文栈中，以便后续的 Fiber 节点可以访问到这个上下文
   pushHostRootContext(workInProgress);
+  // 获取WIP fiber的 updateQueue
   const updateQueue = workInProgress.updateQueue;
   invariant(
     current !== null && updateQueue !== null,
@@ -1059,26 +1086,29 @@ function updateHostRoot(current, workInProgress, renderLanes) {
       'bailed out. This error is likely caused by a bug in React. Please ' +
       'file an issue.',
   );
+  // 获取新旧属性和子节点
   const nextProps = workInProgress.pendingProps;
   const prevState = workInProgress.memoizedState;
   const prevChildren = prevState !== null ? prevState.element : null;
+  // 克隆更新队列
   cloneUpdateQueue(current, workInProgress);
+  // 1、处理更新队列
   processUpdateQueue(workInProgress, nextProps, null, renderLanes);
+  // 拿到processUpdateQueue执行后，最新的memoizedState值
   const nextState = workInProgress.memoizedState;
-  // Caution: React DevTools currently depends on this property
-  // being called "element".
+  // 对于HostRoot的更新，memoizedState值就是包含 element 属性值为 React元素树children 的对象
   const nextChildren = nextState.element;
+  // 检查子节点是否发生变化
   if (nextChildren === prevChildren) {
+    // 1、无变化：如果新的子节点与之前的子节点相同，则重置水合状态并跳过已经完成的工作
     resetHydrationState();
     return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes);
   }
+  // 2、有变化
   const root: FiberRoot = workInProgress.stateNode;
+  // 2-1、检查当前 Fiber 根节点是否需要水合，并进入水合状态 ====== 并初始化客户端树，并将现有的 DOM 节点与 React 的虚拟 DOM 对象同步
   if (root.hydrate && enterHydrationState(workInProgress)) {
-    // If we don't have any current children this might be the first pass.
-    // We always try to hydrate. If this isn't a hydration pass there won't
-    // be any children to hydrate which is effectively the same thing as
-    // not hydrating.
-
+    // 检查当前环境是否支持水合
     if (supportsHydration) {
       const mutableSourceEagerHydrationData =
         root.mutableSourceEagerHydrationData;
@@ -1112,10 +1142,14 @@ function updateHostRoot(current, workInProgress, renderLanes) {
       node.flags = (node.flags & ~Placement) | Hydrating;
       node = node.sibling;
     }
-  } else {
+  }
+  // 2-2、否则，纯客户端渲染进行 协调children流程
+  else {
     // Otherwise reset hydration state in case we aborted and resumed another
     // root.
+    // 协调children，计算workInProgress.child值
     reconcileChildren(current, workInProgress, nextChildren, renderLanes);
+    // 重置水合状态,以便在下次水合时使用
     resetHydrationState();
   }
   return workInProgress.child;
@@ -2986,6 +3020,11 @@ export function markWorkInProgressReceivedUpdate() {
   didReceiveUpdate = true;
 }
 
+/**
+ * 复用clone current.child 作为workInProgress.child
+ * 
+ * @returns workInProgress.child或null
+ */
 function bailoutOnAlreadyFinishedWork(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -3080,6 +3119,18 @@ function remountFiber(
   }
 }
 
+/**
+ * beginWork：
+ * 
+ * 1. update时：如果current存在，在满足一定优化条件时可以复用current节点，这样就能克隆current.child作为workInProgress.child，而不需要新建workInProgress.child。
+
+   2. mount时：若current === null。会根据fiber.tag不同，创建不同类型的子Fiber节点
+ * 
+ * @param {*} current mount时为上次渲染的页面真实rootFiber根节点
+ * @param {*} workInProgress mount时为正在处理的rootFiber副本节点----双缓存流程
+ * @param {*} renderLanes 当前渲染优先级通道
+ * @returns 生成好的workInProgress.child
+ */
 function beginWork(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -3105,11 +3156,13 @@ function beginWork(
     }
   }
 
+  // 是否需要更新
   if (current !== null) {
     const oldProps = current.memoizedProps;
     const newProps = workInProgress.pendingProps;
 
     if (
+      // 如果当前 Fiber 节点存在且有新的属性、上下文变化或类型变化，标记为需要更新
       oldProps !== newProps ||
       hasLegacyContextChanged() ||
       // Force a re-render if the implementation changed due to hot reload:
@@ -3118,11 +3171,14 @@ function beginWork(
       // If props or context changed, mark the fiber as having performed work.
       // This may be unset if the props are determined to be equal later (memo).
       didReceiveUpdate = true;
-    } else if (!includesSomeLane(renderLanes, updateLanes)) {
+    }
+    // current的memoizedProps与wip的pendingProps没啥变化：不需要更新则直接复用current.child为wip的child
+    else if (!includesSomeLane(renderLanes, updateLanes)) {
       didReceiveUpdate = false;
       // This fiber does not have any pending work. Bailout without entering
       // the begin phase. There's still some bookkeeping we that needs to be done
       // in this optimized path, mostly pushing stuff onto the stack.
+      // 根据不同fiber类型执行相应上下文重置逻辑，并最后bailoutOnAlreadyFinishedWork进行可复用性操作
       switch (workInProgress.tag) {
         case HostRoot:
           pushHostRootContext(workInProgress);
@@ -3273,9 +3329,6 @@ function beginWork(
           if (hasChildWork) {
             break;
           } else {
-            // If none of the children had any work, that means that none of
-            // them got retried so they'll still be blocked in the same way
-            // as before. We can fast bail out.
             return null;
           }
         }
@@ -3307,18 +3360,18 @@ function beginWork(
         didReceiveUpdate = false;
       }
     }
-  } else {
+  }
+  // 标记：不需要更新，为挂载阶段
+  else {
+    
     didReceiveUpdate = false;
   }
 
-  // Before entering the begin phase, clear pending update priority.
-  // TODO: This assumes that we're about to evaluate the component and process
-  // the update queue. However, there's an exception: SimpleMemoComponent
-  // sometimes bails out later in the begin phase. This indicates that we should
-  // move this assignment out of the common path and into each branch.
+  // 进入 beginWork 阶段之前，清除当前 Fiber 节点的待处理更新优先级
   workInProgress.lanes = NoLanes;
-
+  // 处理不同类型的 Fiber 节点
   switch (workInProgress.tag) {
+    // IndeterminateComponent：处理不确定类型的组件，调用 mountIndeterminateComponent 进行挂载。
     case IndeterminateComponent: {
       return mountIndeterminateComponent(
         current,
@@ -3367,12 +3420,15 @@ function beginWork(
         renderLanes,
       );
     }
+    // HostRoot：处理根节点，推送根上下文并重置水合状态
     case HostRoot:
       return updateHostRoot(current, workInProgress, renderLanes);
+    // HostComponent：处理原生 DOM 节点，推送主机上下文
     case HostComponent:
       return updateHostComponent(current, workInProgress, renderLanes);
     case HostText:
       return updateHostText(current, workInProgress);
+    // SuspenseComponent：处理 Suspense 组件，处理异步加载和回退逻辑。
     case SuspenseComponent:
       return updateSuspenseComponent(current, workInProgress, renderLanes);
     case HostPortal:

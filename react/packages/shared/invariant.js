@@ -7,8 +7,9 @@
  */
 
 /**
- * Use invariant() to assert state which your program assumes to be true.
+ * React 在编译时遇到了问题，而不是在运行时。这种错误通常是由于开发环境配置不当或依赖版本不兼容引起的
  *
+ * Use invariant() to assert state which your program assumes to be true.
  * Provide sprintf-style format (only %s is supported) and arguments
  * to provide information about what broke and what you were
  * expecting.

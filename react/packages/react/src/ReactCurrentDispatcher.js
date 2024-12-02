@@ -11,6 +11,10 @@ import type {Dispatcher} from 'react-reconciler/src/ReactInternalTypes';
 
 /**
  * Keeps track of the current dispatcher.
+ * 
+ * 在FunctionComponent render前，会根据FunctionComponent对应fiber的以下条件区分mount与update。
+current === null || current.memoizedState === null
+并将不同情况对应的dispatcher赋值给全局变量ReactCurrentDispatcher的current属性。
  */
 const ReactCurrentDispatcher = {
   /**

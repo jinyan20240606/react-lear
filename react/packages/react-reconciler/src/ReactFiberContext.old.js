@@ -287,6 +287,11 @@ function invalidateContextProvider(
   }
 }
 
+/**
+ * 遍历 Fiber 节点链，直到找到根节点或类组件fiber节点上的stateNode上存储的上下文对象信息
+ * @param {*} fiber 
+ * @returns 
+ */
 function findCurrentUnmaskedContext(fiber: Fiber): Object {
   if (disableLegacyContext) {
     return emptyContextObject;
@@ -299,9 +304,11 @@ function findCurrentUnmaskedContext(fiber: Fiber): Object {
         'This error is likely caused by a bug in React. Please file an issue.',
     );
 
+    // 从当前fiber节点遍历 Fiber 节点链表，向上直到找到根节点或类组件节点
     let node = fiber;
     do {
       switch (node.tag) {
+        // 根组件
         case HostRoot:
           return node.stateNode.context;
         case ClassComponent: {

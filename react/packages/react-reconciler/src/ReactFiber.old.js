@@ -113,6 +113,13 @@ if (__DEV__) {
 
 let debugCounter = 1;
 
+/**
+ * 核心方法：fiber节点数据结构构造函数
+ * @param {*} tag 
+ * @param {*} pendingProps 
+ * @param {*} key 
+ * @param {*} mode 
+ */
 function FiberNode(
   tag: WorkTag,
   pendingProps: mixed,
@@ -194,19 +201,14 @@ function FiberNode(
   }
 }
 
-// This is a constructor function, rather than a POJO constructor, still
-// please ensure we do the following:
-// 1) Nobody should add any instance methods on this. Instance methods can be
-//    more difficult to predict when they get optimized and they are almost
-//    never inlined properly in static compilers.
-// 2) Nobody should rely on `instanceof Fiber` for type testing. We should
-//    always know when it is a fiber.
-// 3) We might want to experiment with using numeric keys since they are easier
-//    to optimize in a non-JIT environment.
-// 4) We can easily go from a constructor to a createFiber object literal if that
-//    is faster.
-// 5) It should be easy to port this to a C struct and keep a C implementation
-//    compatible.
+/**
+ * 创建fiber节点
+ * @param {*} tag 
+ * @param {*} pendingProps 
+ * @param {*} key 
+ * @param {*} mode 
+ * @returns 
+ */
 const createFiber = function(
   tag: WorkTag,
   pendingProps: mixed,
@@ -251,14 +253,22 @@ export function resolveLazyComponentTag(Component: Function): WorkTag {
 }
 
 // This is used to create an alternate fiber to do work on.
+/**
+ * 为新一轮渲染工作初始化双缓存workInProgress节点 ====> 
+ * 
+ * 双缓存是缓存rootFiber根节点开始。rootFiber的alternate值就是缓存的另一份B版rootFiber
+ * 
+ * B版rootFiber节点取名字叫做全局变量WIP(workInProgress)
+ * 
+ * @param {*} current fiberRoot.current 即rootFiber根节点
+ * @param {*} pendingProps 挂载时为null
+ * @returns 返回WIP fiber
+ */
 export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
+  // AB双缓存技术
   let workInProgress = current.alternate;
+  // 如果没有交替节点，则创建一个新fiber节点，将其 alternate 设置为 current，同时将 current 的 alternate 设置为新的 Fiber 节点
   if (workInProgress === null) {
-    // We use a double buffering pooling technique because we know that we'll
-    // only ever need at most two versions of a tree. We pool the "other" unused
-    // node that we're free to reuse. This is lazily created to avoid allocating
-    // extra objects for things that are never updated. It also allow us to
-    // reclaim the extra memory if needed.
     workInProgress = createFiber(
       current.tag,
       pendingProps,
@@ -276,10 +286,11 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
       workInProgress._debugOwner = current._debugOwner;
       workInProgress._debugHookTypes = current._debugHookTypes;
     }
-
+    // 将其 alternate 设置为 current，同时将 current 的 alternate 设置为新的 Fiber 节点
     workInProgress.alternate = current;
     current.alternate = workInProgress;
   } else {
+    // 如果有 ，则复用
     workInProgress.pendingProps = pendingProps;
     // Needed because Blocks store data on type.
     workInProgress.type = current.type;
@@ -303,6 +314,7 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
     }
   }
 
+  // 复制current一些状态
   workInProgress.childLanes = current.childLanes;
   workInProgress.lanes = current.lanes;
 
@@ -428,6 +440,14 @@ export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
   return workInProgress;
 }
 
+/**
+ * 创建rootFiber节点
+ * 
+ * 赋值mode：根据tag值计算React应用启动模式
+ * 
+ * @param {*} tag 
+ * @returns 
+ */
 export function createHostRootFiber(tag: RootTag): Fiber {
   let mode;
   if (tag === ConcurrentRoot) {
@@ -448,6 +468,17 @@ export function createHostRootFiber(tag: RootTag): Fiber {
   return createFiber(HostRoot, null, null, mode);
 }
 
+/**
+ * 1. 根据不同type类型，确定fiberTag变量值
+ * 2. 最后用其创建fiber节点，返回fiber节点
+ * @param {*} type 
+ * @param {*} key 
+ * @param {*} pendingProps 
+ * @param {*} owner 
+ * @param {*} mode 
+ * @param {*} lanes 
+ * @returns 
+ */
 export function createFiberFromTypeAndProps(
   type: any, // React$ElementType
   key: null | string,
@@ -459,6 +490,8 @@ export function createFiberFromTypeAndProps(
   let fiberTag = IndeterminateComponent;
   // The resolved type is set if we know what the final type will be. I.e. it's not lazy.
   let resolvedType = type;
+  // 1、初始化变量：下面3种判断，赋值fiberTag变量值
+  // 若为函数类型
   if (typeof type === 'function') {
     if (shouldConstruct(type)) {
       fiberTag = ClassComponent;
@@ -470,9 +503,13 @@ export function createFiberFromTypeAndProps(
         resolvedType = resolveFunctionForHotReloading(resolvedType);
       }
     }
-  } else if (typeof type === 'string') {
+  }
+  // 若为字符串类型
+  else if (typeof type === 'string') {
     fiberTag = HostComponent;
-  } else {
+  }
+  // 若元素类型为 对象类型
+  else {
     getTag: switch (type) {
       case REACT_FRAGMENT_TYPE:
         return createFiberFromFragment(pendingProps.children, mode, lanes, key);
@@ -500,6 +537,7 @@ export function createFiberFromTypeAndProps(
         }
       // eslint-disable-next-line no-fallthrough
       default: {
+        // 自定义组件类型，确定fiberTag变量值
         if (typeof type === 'object' && type !== null) {
           switch (type.$$typeof) {
             case REACT_PROVIDER_TYPE:
@@ -568,6 +606,7 @@ export function createFiberFromTypeAndProps(
     }
   }
 
+  // 2、传入变量创建fiber。return
   const fiber = createFiber(fiberTag, pendingProps, key, mode);
   fiber.elementType = type;
   fiber.type = resolvedType;
@@ -607,6 +646,14 @@ export function createFiberFromElement(
   return fiber;
 }
 
+/**
+ * 通过createFiber创建Fragment类型的节点
+ * @param {*} elements 
+ * @param {*} mode 
+ * @param {*} lanes 
+ * @param {*} key 
+ * @returns 
+ */
 export function createFiberFromFragment(
   elements: ReactFragment,
   mode: TypeOfMode,

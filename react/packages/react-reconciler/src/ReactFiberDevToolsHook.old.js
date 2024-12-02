@@ -20,6 +20,10 @@ let rendererID = null;
 let injectedHook = null;
 let hasLoggedError = false;
 
+/**
+ * React 开发者工具（React DevTools）是否存在于当前环境中。
+ * - __REACT_DEVTOOLS_GLOBAL_HOOK__ 是一个全局变量，通常由 React DevTools 注入到浏览器的全局对象（如 window）中
+ */
 export const isDevToolsPresent =
   typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== 'undefined';
 

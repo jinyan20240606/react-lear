@@ -63,14 +63,25 @@ function ReactDOMRoot(container: Container, options: void | RootOptions) {
   this._internalRoot = createRootImpl(container, ConcurrentRoot, options);
 }
 
+/**
+ * 构造render实例对象（含_internalRoot：新建fiberRoot）
+ * @param {*} container 目标DOM容器
+ * @param {*} tag 标识根实例的类型。常见的标签值包括 LegacyRoot 和 ConcurrentRoot 
+ * @param {*} options 配置
+ * @returns {{render:Function, unmount:Function,_internalRoot: FiberRoot}} RootType
+ */
 function ReactDOMBlockingRoot(
+  /** 目标DOM容器 */
   container: Container,
+  /** 标识根实例的类型。常见的标签值包括 LegacyRoot 和 ConcurrentRoot */
   tag: RootTag,
+  /** 配置 */
   options: void | RootOptions,
 ) {
   this._internalRoot = createRootImpl(container, tag, options);
 }
 
+/** 将React 元素渲染到指定的容器中 */
 ReactDOMRoot.prototype.render = ReactDOMBlockingRoot.prototype.render = function(
   children: ReactNodeList,
 ): void {
@@ -82,9 +93,12 @@ ReactDOMRoot.prototype.render = ReactDOMBlockingRoot.prototype.render = function
           'To execute a side effect after rendering, declare it in a component body with useEffect().',
       );
     }
+    // 获取容器元素
     const container = root.containerInfo;
 
+    // 检查容器节点类型
     if (container.nodeType !== COMMENT_NODE) {
+      // 查找当前rootFiber根节点的宿主DOM，校验宿主DOM是否与container同一个DOM，若不是则为多实例渲染报错
       const hostInstance = findHostInstanceWithNoPortals(root.current);
       if (hostInstance) {
         if (hostInstance.parentNode !== container) {
@@ -98,6 +112,7 @@ ReactDOMRoot.prototype.render = ReactDOMBlockingRoot.prototype.render = function
       }
     }
   }
+  // 更新容器中的内容
   updateContainer(children, root, null, null);
 };
 
@@ -117,24 +132,32 @@ ReactDOMRoot.prototype.unmount = ReactDOMBlockingRoot.prototype.unmount = functi
   });
 };
 
+/** 创建根实例：返回fiberRoot：整个React应用的根 */
 function createRootImpl(
   container: Container,
   tag: RootTag,
   options: void | RootOptions,
 ) {
-  // Tag is either LegacyRoot or Concurrent Root
+  // 1、解析选项
   const hydrate = options != null && options.hydrate === true;
   const hydrationCallbacks =
     (options != null && options.hydrationOptions) || null;
+  /** 水合的可变数据源 */
   const mutableSources =
     (options != null &&
       options.hydrationOptions != null &&
       options.hydrationOptions.mutableSources) ||
     null;
+
+  // 2、创建容器
+  // 初始化根Fiber节点
   const root = createContainer(container, tag, hydrate, hydrationCallbacks);
+  // 标记容器DOM的根属性为当前rootFiber根节点
   markContainerAsRoot(root.current, container);
+  // 获取容器节点类型
   const containerNodeType = container.nodeType;
 
+  // 3、处理DOM容器节点的事件监听
   if (enableEagerRootListeners) {
     const rootContainerElement =
       container.nodeType === COMMENT_NODE ? container.parentNode : container;
@@ -158,6 +181,8 @@ function createRootImpl(
     }
   }
 
+  // 4、ssr水合相关：类似于useMustableSource 可变源-新钩子的特性 参考：https://juejin.cn/post/7026210002042011655#heading-10
+  // 注册可变源：可变源是指那些在组件渲染过程中可能会发生变化的外部数据源。
   if (mutableSources) {
     for (let i = 0; i < mutableSources.length; i++) {
       const mutableSource = mutableSources[i];
@@ -192,6 +217,20 @@ export function createBlockingRoot(
   return new ReactDOMBlockingRoot(container, BlockingRoot, options);
 }
 
+/**
+ * 创建根实例
+ * 
+ * 该函数用于创建一个根实例，主要服务于 `ReactDOM.render()` 这个传统方法并固定传入LegacyRoot Tag表明当前是传统模式。
+ * 
+ * 创建的根实例包含 `render` 和 `unmount` 方法，用于管理和控制组件的渲染和卸载。
+ * 
+ * @param {Element} container 容器元素，通常是 DOM 元素，用于存放 React 组件的渲染结果。
+ * @param {Object} options 渲染选项，可以包含一些配置项，例如并发模式、严格模式等。
+ * @returns {RootType} 返回一个包含 `render`、`unmount` 和 `_internalRoot` 属性的对象。
+ *                    - `render(element)`: 将 React 元素渲染到根容器中。
+ *                    - `unmount()`: 卸载根容器中的所有内容。
+ *                    - `_internalRoot`: 内部使用的 Fiber 根对象。
+ */
 export function createLegacyRoot(
   container: Container,
   options?: RootOptions,

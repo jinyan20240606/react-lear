@@ -31,6 +31,7 @@ export const replayFailedUnitOfWorkWithInvokeGuardedCallback = __DEV__;
 export const warnAboutDeprecatedLifecycles = true;
 
 // Gather advanced timing metrics for Profiler subtrees.
+/** 是否启用性能分析计时器，以便收集 Profiler 子树的高级定时指标 */
 export const enableProfilerTimer = __PROFILE__;
 
 // Record durations for commit and passive effects phases.

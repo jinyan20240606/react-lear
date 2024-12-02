@@ -94,6 +94,7 @@ import {
   getCurrentUpdateLanePriority as getCurrentUpdateLanePriority_new,
 } from './ReactFiberReconciler.new';
 
+/** 创建和初始化一个新的 fiberRoot 根实例，并给current初始化一个rootFiber节点 */
 export const createContainer = enableNewReconciler
   ? createContainer_new
   : createContainer_old;
@@ -106,6 +107,7 @@ export const batchedEventUpdates = enableNewReconciler
 export const batchedUpdates = enableNewReconciler
   ? batchedUpdates_new
   : batchedUpdates_old;
+/** 非批量更新，即立即执行更新而不是将其批量处理 */
 export const unbatchedUpdates = enableNewReconciler
   ? unbatchedUpdates_new
   : unbatchedUpdates_old;
@@ -197,6 +199,7 @@ export const focusWithin = enableNewReconciler
 export const observeVisibleRects = enableNewReconciler
   ? observeVisibleRects_new
   : observeVisibleRects_old;
+/**  服务端渲染（SSR）和客户端水合（hydration）过程中处理可变源的版本一致问题 */
 export const registerMutableSourceForHydration = enableNewReconciler
   ? registerMutableSourceForHydration_new
   : registerMutableSourceForHydration_old;

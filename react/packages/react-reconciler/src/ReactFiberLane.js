@@ -43,10 +43,12 @@ import {
   NoPriority as NoSchedulerPriority,
 } from './SchedulerWithReactIntegration.new';
 
+/** 18 个通道优先级 对应 18 个通道 */
 export const SyncLanePriority: LanePriority = 15;
 export const SyncBatchedLanePriority: LanePriority = 14;
 
 const InputDiscreteHydrationLanePriority: LanePriority = 13;
+/** : LanePriority = 12; */
 export const InputDiscreteLanePriority: LanePriority = 12;
 
 const InputContinuousHydrationLanePriority: LanePriority = 11;
@@ -69,8 +71,10 @@ const OffscreenLanePriority: LanePriority = 1;
 
 export const NoLanePriority: LanePriority = 0;
 
+// 31比特位的lane通道
 const TotalLanes = 31;
 
+// react的31位lane模型：定义的不同优先级通道赛道，同步通道赛道SyncLane相当于跑道的最内圈，尾号为1
 export const NoLanes: Lanes = /*                        */ 0b0000000000000000000000000000000;
 export const NoLane: Lane = /*                          */ 0b0000000000000000000000000000000;
 
@@ -95,6 +99,7 @@ export const SomeRetryLane: Lanes = /*                  */ 0b0000010000000000000
 
 export const SelectiveHydrationLane: Lane = /*          */ 0b0000100000000000000000000000000;
 
+/** 一组非空闲通道 */
 const NonIdleLanes = /*                                 */ 0b0000111111111111111111111111111;
 
 export const IdleHydrationLane: Lane = /*               */ 0b0001000000000000000000000000000;
@@ -118,7 +123,16 @@ export function setCurrentUpdateLanePriority(newLanePriority: LanePriority) {
 // Used by getHighestPriorityLanes and getNextLanes:
 let return_highestLanePriority: LanePriority = DefaultLanePriority;
 
+/**
+ * 确定一组优先级通道中最高优先级的通道，同时赋值全局变量return_highestLanePriority
+ * 
+ * 按照ifelse顺序，优先判断的是优先级最高的，如SyncLane。共判断完整18个通道
+ * 
+ * @param lanes 一组通道
+ * @returns 最高优先级的通道
+ */
 function getHighestPriorityLanes(lanes: Lanes | Lane): Lanes {
+  // 如果 lanes 中包含 SyncLane，返回 SyncLane 并设置最高优先级为 SyncLanePriority。
   if ((SyncLane & lanes) !== NoLanes) {
     return_highestLanePriority = SyncLanePriority;
     return SyncLane;
@@ -246,35 +260,51 @@ export function lanePriorityToSchedulerPriority(
   }
 }
 
+/**
+ * 从fiberRoot携带的各种lanes属性值中计算出目前fiberRoot中要处理的最高优lane通道
+ * 
+ * 这些lanes相关属性只在fiberRoot节点有，用于统一计算fiber树的更新优先级
+ * 
+ * @param {*} root FiberRoot
+ * @param {*} wipLanes 正在进行的工作的优先级通道
+ * @returns 返回值：需要处理的优先级通道
+ */
 export function getNextLanes(root: FiberRoot, wipLanes: Lanes): Lanes {
   // Early bailout if there's no pending work left.
+  // 如果没有待处理的工作（pendingLanes 为 NoLanes），直接返回 NoLanes。
   const pendingLanes = root.pendingLanes;
   if (pendingLanes === NoLanes) {
     return_highestLanePriority = NoLanePriority;
     return NoLanes;
   }
 
-  let nextLanes = NoLanes;
-  let nextLanePriority = NoLanePriority;
+  // 初始化变量
+  // 获取已过期的优先级通道（expiredLanes）、已暂停的优先级通道（suspendedLanes）和已触发的优先级通道（pingedLanes
+  let nextLanes = NoLanes; // 0
+  let nextLanePriority = NoLanePriority; // 15
 
   const expiredLanes = root.expiredLanes;
   const suspendedLanes = root.suspendedLanes;
   const pingedLanes = root.pingedLanes;
 
-  // Check if any work has expired.
+  // 处理已过期的优先级通道
   if (expiredLanes !== NoLanes) {
     nextLanes = expiredLanes;
+    // 如果有已过期的优先级通道，优先处理这些通道，并设置最高的通道优先级（SyncLanePriority）
     nextLanePriority = return_highestLanePriority = SyncLanePriority;
   } else {
-    // Do not work on any idle work until all the non-idle work has finished,
-    // even if the work is suspended.
+    // 否则，如果有非空闲的优先级通道（nonIdlePendingLanes）。
     const nonIdlePendingLanes = pendingLanes & NonIdleLanes;
-    if (nonIdlePendingLanes !== NoLanes) {
+    if (nonIdlePendingLanes !== NoLanes) {// 通过按位与操作 (&)，筛选出 pendingLanes 中属于 NonIdleLanes 的部分,若结果不为0说明存在非空闲通道
+      // 去除暂停suspended的通道：
       const nonIdleUnblockedLanes = nonIdlePendingLanes & ~suspendedLanes;
+      // 优先择优处理未被暂停的通道（nonIdleUnblockedLanes）
       if (nonIdleUnblockedLanes !== NoLanes) {
+        // 确定一组通道中最高优的，同时赋值全局变量return_highestLanePriority
         nextLanes = getHighestPriorityLanes(nonIdleUnblockedLanes);
         nextLanePriority = return_highestLanePriority;
       } else {
+        // 如果没有未被暂停的通道即都是被暂停的状态：则与上pingedLanes，继续择优处理
         const nonIdlePingedLanes = nonIdlePendingLanes & pingedLanes;
         if (nonIdlePingedLanes !== NoLanes) {
           nextLanes = getHighestPriorityLanes(nonIdlePingedLanes);
@@ -282,7 +312,10 @@ export function getNextLanes(root: FiberRoot, wipLanes: Lanes): Lanes {
         }
       }
     } else {
-      // The only remaining work is Idle.
+      // 否则如果没有非空闲的通道：
+      // ~suspendedLanes是未被暂停
+      // 优先处理未被暂停的通道（unblockedLanes）。
+      // 否则，优先处理已触发的通道（pingedLanes）
       const unblockedLanes = pendingLanes & ~suspendedLanes;
       if (unblockedLanes !== NoLanes) {
         nextLanes = getHighestPriorityLanes(unblockedLanes);
@@ -296,19 +329,18 @@ export function getNextLanes(root: FiberRoot, wipLanes: Lanes): Lanes {
     }
   }
 
+  // 处理特殊情况
   if (nextLanes === NoLanes) {
     // This should only be reachable if we're suspended
     // TODO: Consider warning in this path if a fallback timer is not scheduled.
     return NoLanes;
   }
 
-  // If there are higher priority lanes, we'll include them even if they
-  // are suspended.
+  // 包含更高优先级的通道----包含所有优先级相同或更高的通道。
   nextLanes = pendingLanes & getEqualOrHigherPriorityLanes(nextLanes);
 
-  // If we're already in the middle of a render, switching lanes will interrupt
-  // it and we'll lose our progress. We should only do this if the new lanes are
-  // higher priority.
+  // 检查是否中断当前工作
+  // 如果当前有正在进行的工作（wipLanes），并且新的优先级通道比当前的工作优先级高，中断当前工作并处理新的通道
   if (
     wipLanes !== NoLanes &&
     wipLanes !== nextLanes &&
@@ -325,23 +357,7 @@ export function getNextLanes(root: FiberRoot, wipLanes: Lanes): Lanes {
     }
   }
 
-  // Check for entangled lanes and add them to the batch.
-  //
-  // A lane is said to be entangled with another when it's not allowed to render
-  // in a batch that does not also include the other lane. Typically we do this
-  // when multiple updates have the same source, and we only want to respond to
-  // the most recent event from that source.
-  //
-  // Note that we apply entanglements *after* checking for partial work above.
-  // This means that if a lane is entangled during an interleaved event while
-  // it's already rendering, we won't interrupt it. This is intentional, since
-  // entanglement is usually "best effort": we'll try our best to render the
-  // lanes in the same batch, but it's not worth throwing out partially
-  // completed work in order to do it.
-  //
-  // For those exceptions where entanglement is semantically important, like
-  // useMutableSource, we should ensure that there is no partial work at the
-  // time we apply the entanglement.
+  // 处理纠缠的通道。如果新的优先级通道中包含纠缠的通道，将这些纠缠的通道也包含进来
   const entangledLanes = root.entangledLanes;
   if (entangledLanes !== NoLanes) {
     const entanglements = root.entanglements;
@@ -356,6 +372,7 @@ export function getNextLanes(root: FiberRoot, wipLanes: Lanes): Lanes {
     }
   }
 
+  // 返回结果：需要处理的优先级通道
   return nextLanes;
 }
 
@@ -481,6 +498,11 @@ export function includesOnlyTransitions(lanes: Lanes) {
 
 // To ensure consistency across multiple updates in the same event, this should
 // be a pure function, so that it always returns the same lane for given inputs.
+/**
+ * 确定更新优先级通道
+ * 
+ * 确保在同一个事件中多次更新时，始终返回相同的优先级通道，以保证一致性
+ */
 export function findUpdateLane(
   lanePriority: LanePriority,
   wipLanes: Lanes,
@@ -493,9 +515,11 @@ export function findUpdateLane(
     case SyncBatchedLanePriority:
       return SyncBatchedLane;
     case InputDiscreteLanePriority: {
+      // 使用 pickArbitraryLane 函数从 InputDiscreteLanes 中选择一个未被占用的通道。~wipLanes 表示当前未被占用的通道。
       const lane = pickArbitraryLane(InputDiscreteLanes & ~wipLanes);
+      // 如果 lane 为 NoLane，表示所有 InputDiscreteLanes 都已被占用
       if (lane === NoLane) {
-        // Shift to the next priority level
+        // 跳到下一个优先级Shift to the next priority level
         return findUpdateLane(InputContinuousLanePriority, wipLanes);
       }
       return lane;
@@ -575,6 +599,11 @@ export function findRetryLane(wipLanes: Lanes): Lane {
   return lane;
 }
 
+/**
+ * 用于从一组通道（lanes）中找到最高优先级的通道
+ * 
+ * 按位运算的特性来高效地找到最低位的置位位（即最高优先级的通道）
+ */
 function getHighestPriorityLane(lanes: Lanes) {
   return lanes & -lanes;
 }
@@ -585,10 +614,18 @@ function getLowestPriorityLane(lanes: Lanes): Lane {
   return index < 0 ? NoLanes : 1 << index;
 }
 
+/**
+ * 获取与给定的优先级通道相同或更高优先级的所有通道
+ * @param {*} lanes 
+ * @returns 
+ */
 function getEqualOrHigherPriorityLanes(lanes: Lanes | Lane): Lanes {
   return (getLowestPriorityLane(lanes) << 1) - 1;
 }
 
+/**
+ * 从当前正在进行的通道们中选择最高优的通道
+ */
 export function pickArbitraryLane(lanes: Lanes): Lane {
   // This wrapper function gets inlined. Only exists so to communicate that it
   // doesn't matter which bit is selected; you can pick any bit without
@@ -609,6 +646,12 @@ export function includesSomeLane(a: Lanes | Lane, b: Lanes | Lane) {
   return (a & b) !== NoLanes;
 }
 
+/**
+ * 判断某个更新的优先级（subset）是否是 优先级组(set)的子集
+ * @param {*} set 
+ * @param {*} subset 
+ * @returns 返回false不是子集，true是子集
+ */
 export function isSubsetOfLanes(set: Lanes, subset: Lanes | Lane) {
   return (set & subset) === subset;
 }
@@ -643,11 +686,18 @@ export function createLaneMap<T>(initial: T): LaneMap<T> {
   return new Array(TotalLanes).fill(initial);
 }
 
+/**
+ * 标记一个根实例节点（FiberRoot）一些属性.表明已经接收到一个更新请求的方法。它主要用于调度更新和管理优先级队列
+ * @param {*} root 
+ * @param {*} updateLane 
+ * @param {*} eventTime 
+ */
 export function markRootUpdated(
   root: FiberRoot,
   updateLane: Lane,
   eventTime: number,
 ) {
+  // 当前更新的优先级通道添加到 pendingLanes 中
   root.pendingLanes |= updateLane;
 
   // TODO: Theoretically, any update to any lane can unblock any other lane. But
@@ -661,11 +711,12 @@ export function markRootUpdated(
   // those updates as parallel.
 
   // Unsuspend any update at equal or lower priority.
+  // 清除那些已经被当前更新所覆盖的优先级的阻塞状态
   const higherPriorityLanes = updateLane - 1; // Turns 0b1000 into 0b0111
 
   root.suspendedLanes &= higherPriorityLanes;
   root.pingedLanes &= higherPriorityLanes;
-
+  // 更新 root.eventTimes 数组中对应于当前更新优先级的位置，将其设置为当前的事件时间
   const eventTimes = root.eventTimes;
   const index = laneToIndex(updateLane);
   // We can always overwrite an existing timestamp because we prefer the most

@@ -5,6 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  *
  * @flow
+ * 
+ * 标记，对fiber到commit阶段的DOM操作标记：增删改等
+ * 
  */
 
 export type Flags = number;
@@ -14,15 +17,23 @@ export const NoFlags = /*                      */ 0b000000000000000000;
 export const PerformedWork = /*                */ 0b000000000000000001;
 
 // You can change the rest (and add more).
+/** 新节点需要被插入到 DOM 中 */
 export const Placement = /*                    */ 0b000000000000000010;
 export const Update = /*                       */ 0b000000000000000100;
+/** 新节点需要被插入到 DOM 中并且需要被更新 */
 export const PlacementAndUpdate = /*           */ 0b000000000000000110;
 export const Deletion = /*                     */ 0b000000000000001000;
+/** 节点的内容需要被重置 */
 export const ContentReset = /*                 */ 0b000000000000010000;
+/** 节点有一个回调需要执行 */
 export const Callback = /*                     */ 0b000000000000100000;
+/** 表示节点捕获了一个错误 */
 export const DidCapture = /*                   */ 0b000000000001000000;
+/** 节点有一个引用需要更新 */
 export const Ref = /*                          */ 0b000000000010000000;
+/** 节点需要进行快照操作 */
 export const Snapshot = /*                     */ 0b000000000100000000;
+/** 节点有一个被动的副作用需要执行。 */
 export const Passive = /*                      */ 0b000000001000000000;
 // TODO (effects) Remove this bit once the new reconciler is synced to the old.
 export const PassiveUnmountPendingDev = /*     */ 0b000010000000000000;

@@ -6,7 +6,7 @@
  *
  * @flow strict
  */
-
+// 最小堆 数据结构
 type Heap = Array<Node>;
 type Node = {|
   id: number,
@@ -19,6 +19,7 @@ export function push(heap: Heap, node: Node): void {
   siftUp(heap, node, index);
 }
 
+/** 获取堆顶：最小值 */
 export function peek(heap: Heap): Node | null {
   const first = heap[0];
   return first === undefined ? null : first;

@@ -110,16 +110,26 @@ function shouldHydrateDueToLegacyHeuristic(container) {
   );
 }
 
+/**
+ * 在给定的 DOM 容器中创建一个新的根实例，并根据传入的参数决定是否需要水合。它会清除容器中的现有内容（如果不水合），并在开发模式下发出相关的警告。最后，它调用 createLegacyRoot 函数创建并返回新的根实例
+ * @param {*} container 
+ * @param {*} forceHydrate 
+ * @returns 返回RootType类型 带render渲染方法
+ */
 function legacyCreateRootFromDOMContainer(
+  /** 目标DOM容器 */
   container: Container,
+  /** 是否需要水和 */
   forceHydrate: boolean,
 ): RootType {
+  // 是否水和
   const shouldHydrate =
     forceHydrate || shouldHydrateDueToLegacyHeuristic(container);
-  // First clear any existing content.
+  // 如果不水和，清除现有内容
   if (!shouldHydrate) {
     let warned = false;
     let rootSibling;
+    // 遍历移除容器中所有子孙dom节点
     while ((rootSibling = container.lastChild)) {
       if (__DEV__) {
         if (
@@ -149,6 +159,7 @@ function legacyCreateRootFromDOMContainer(
     }
   }
 
+  // 创建根实例
   return createLegacyRoot(
     container,
     shouldHydrate
@@ -172,29 +183,58 @@ function warnOnInvalidCallback(callback: mixed, callerName: string): void {
   }
 }
 
+/**
+ * render 1级核心函数：渲染ReactElement树到指定DOM容器中
+ * @param {*} parentComponent 
+ * @param {*} children 
+ * @param {*} container 
+ * @param {*} forceHydrate 
+ * @param {*} callback 
+ * 主要是凑齐参数调用updateContainer。
+ * 
+ * 它分为两个主要部分：初始挂载和更新。
+ * 1. 初始挂载时
+ *    1. 创建一个新的根实例，拿到fiberRoot
+ *    2. 传入执行updateContainer
+ * 2. 更新
+ *    1. 使用现有的根实例进行更新拿到fiberRoot
+ *    2. 传入执行updateContainer
+ * @returns 
+ */
 function legacyRenderSubtreeIntoContainer(
   parentComponent: ?React$Component<any, any>,
+  /** 要渲染的 React 节点列表 */
   children: ReactNodeList,
+  /** 要渲染到的DOM容器 */
   container: Container,
+  /** 是否强制水和：用于服务端渲染后的客户端初始化 */
   forceHydrate: boolean,
+  /** 渲染完后回调 */
   callback: ?Function,
 ) {
+  // 开发模式下：发出警告
   if (__DEV__) {
+    // 发出关于顶层更新的警告
     topLevelUpdateWarnings(container);
+    // 检查回调函数是否有效，并发出警告
     warnOnInvalidCallback(callback === undefined ? null : callback, 'render');
   }
 
-  // TODO: Without `any` type, Flow says "Property cannot be accessed on any
-  // member of intersection type." Whyyyyyy.
+  // 获取root根实例对象
   let root: RootType = (container._reactRootContainer: any);
+  console.log('获取root根节点root：', root);
   let fiberRoot;
+
+  // mount：如果根实例不存在，表示这是初始挂载
   if (!root) {
-    // Initial mount
+    // 创建一个新的根实例
     root = container._reactRootContainer = legacyCreateRootFromDOMContainer(
       container,
       forceHydrate,
     );
+    // 获取 Fiber 根节点 fiberRoot
     fiberRoot = root._internalRoot;
+    // 包装callback
     if (typeof callback === 'function') {
       const originalCallback = callback;
       callback = function() {
@@ -202,12 +242,17 @@ function legacyRenderSubtreeIntoContainer(
         originalCallback.call(instance);
       };
     }
-    // Initial mount should not be batched.
+    // 临时更改执行上下文：确保初始挂载不在批处理中进行
     unbatchedUpdates(() => {
+      // 核心方法：更新容器中内容
       updateContainer(children, fiberRoot, parentComponent, callback);
     });
-  } else {
+  } 
+  // update：更新
+  else {
+    // 获取现有的 Fiber 根节点
     fiberRoot = root._internalRoot;
+    // 包装callback
     if (typeof callback === 'function') {
       const originalCallback = callback;
       callback = function() {
@@ -215,9 +260,10 @@ function legacyRenderSubtreeIntoContainer(
         originalCallback.call(instance);
       };
     }
-    // Update
+    // 核心方法：更新容器中内容
     updateContainer(children, fiberRoot, parentComponent, callback);
   }
+  // 返回根实例
   return getPublicRootInstance(fiberRoot);
 }
 
@@ -284,15 +330,24 @@ export function hydrate(
   );
 }
 
+/**
+ * ReactDOM.render 入口函数 11181715
+ * @param {*} element 
+ * @param {*} container 
+ * @param {*} callback 
+ * @returns 
+ */
 export function render(
   element: React$Element<any>,
   container: Container,
   callback: ?Function,
 ) {
+  // eslint-disable-next-line react-internal/invariant-args
   invariant(
     isValidContainer(container),
-    'Target container is not a DOM element.',
+    'Target container is not a DOM element哈哈.',
   );
+  debugger;
   if (__DEV__) {
     const isModernRoot =
       isContainerMarkedAsRoot(container) &&

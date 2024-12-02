@@ -193,6 +193,7 @@ export function unstable_runWithPriority<T>(
   }
 }
 
+/** 获取当前调度优先级：默认是3NormalPrio */
 export function unstable_getCurrentPriorityLevel() {
   return currentPriorityLevel_DEPRECATED;
 }

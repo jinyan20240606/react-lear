@@ -78,6 +78,9 @@ var isPerformingWork = false;
 var isHostCallbackScheduled = false;
 var isHostTimeoutScheduled = false;
 
+/**
+ * 检查timerQueue最小堆队列，将到期的计时器从 timerQueue 移动到 taskQueue 中
+ */
 function advanceTimers(currentTime) {
   // Check for tasks that are no longer delayed and add them to the queue.
   let timer = peek(timerQueue);
@@ -89,6 +92,7 @@ function advanceTimers(currentTime) {
       // Timer fired. Transfer to the task queue.
       pop(timerQueue);
       timer.sortIndex = timer.expirationTime;
+      // push进taskQueue最小堆队列
       push(taskQueue, timer);
       if (enableProfiling) {
         markTaskStart(timer, currentTime);
@@ -103,22 +107,35 @@ function advanceTimers(currentTime) {
 }
 
 function handleTimeout(currentTime) {
+  // isHostTimeoutScheduled 设置为 false，表示当前没有定时器被安排
   isHostTimeoutScheduled = false;
+  // 检查所有计时器，将到期的计时器从 timerQueue 移动到 taskQueue 中
   advanceTimers(currentTime);
 
+  // 检查主机回调是否已安排
   if (!isHostCallbackScheduled) {
+    // 如果任务队列 taskQueue 不为空，表示有任务需要立即执行
     if (peek(taskQueue) !== null) {
       isHostCallbackScheduled = true;
+      // 调用 requestHostCallback(flushWork) 请求主机回调，flushWork 函数将处理任务队列中的任务。
       requestHostCallback(flushWork);
     } else {
+      // 检查定时器队列
       const firstTimer = peek(timerQueue);
       if (firstTimer !== null) {
+        // 请求主机延时器
         requestHostTimeout(handleTimeout, firstTimer.startTime - currentTime);
       }
     }
   }
 }
 
+/**
+ * 执行Work：执行taskQueue中的立即执行任务
+ * @param {*} hasTimeRemaining 
+ * @param {*} initialTime 
+ * @returns 
+ */
 function flushWork(hasTimeRemaining, initialTime) {
   if (enableProfiling) {
     markSchedulerUnsuspended(initialTime);
@@ -276,85 +293,112 @@ function unstable_wrapCallback(callback) {
   };
 }
 
+/**
+ * 用于根据给定的优先级和选项调度回调任务。
+ * 这个函数会将回调任务添加到任务队列中，并根据系统调度机制任务的优先级和开始时间来决定何时执行任务
+ * 执行时：通过requestHostCallback(flushWork) 执行传入的callback回调
+ * @param {*} priorityLevel 
+ * @param {*} callback 调度的callback
+ * @param {*} options 
+ * @returns 
+ */
 function unstable_scheduleCallback(priorityLevel, callback, options) {
+  // 获取当前时间戳
   var currentTime = getCurrentTime();
 
+  // 计算任务的开始时间
   var startTime;
   if (typeof options === 'object' && options !== null) {
     var delay = options.delay;
     if (typeof delay === 'number' && delay > 0) {
+      // 如果提供了延迟时间且大于0，任务的开始时间为当前时间加上延迟时间
       startTime = currentTime + delay;
     } else {
+      // 如果没有提供延迟时间或者延迟时间小于等于0，任务的开始时间就是当前时间
       startTime = currentTime;
     }
   } else {
+    // 如果没有提供选项，任务的开始时间就是当前时间
     startTime = currentTime;
   }
 
-  var timeout;
+  // 根据任务的6大优先级确定任务的超时时间
+  var timeout; // 毫秒延时时间
   switch (priorityLevel) {
     case ImmediatePriority:
-      timeout = IMMEDIATE_PRIORITY_TIMEOUT;
+      timeout = IMMEDIATE_PRIORITY_TIMEOUT; // 立即执行的优先级
       break;
     case UserBlockingPriority:
-      timeout = USER_BLOCKING_PRIORITY_TIMEOUT;
+      timeout = USER_BLOCKING_PRIORITY_TIMEOUT; // 用户阻塞优先级
       break;
     case IdlePriority:
-      timeout = IDLE_PRIORITY_TIMEOUT;
+      timeout = IDLE_PRIORITY_TIMEOUT; // 空闲优先级
       break;
     case LowPriority:
-      timeout = LOW_PRIORITY_TIMEOUT;
+      timeout = LOW_PRIORITY_TIMEOUT; // 低优先级
       break;
     case NormalPriority:
     default:
-      timeout = NORMAL_PRIORITY_TIMEOUT;
+      timeout = NORMAL_PRIORITY_TIMEOUT; // 默认优先级
       break;
   }
 
+  // 计算任务的到期时间
   var expirationTime = startTime + timeout;
 
+  // 创建新的任务对象
   var newTask = {
-    id: taskIdCounter++,
-    callback,
-    priorityLevel,
-    startTime,
-    expirationTime,
-    sortIndex: -1,
+    id: taskIdCounter++, // 任务的唯一ID
+    callback, // 任务的回调函数
+    priorityLevel, // 任务的优先级
+    startTime, // 任务的开始时间
+    expirationTime, // 任务的到期时间
+    sortIndex: -1, // 任务的排序索引，初始化为-1后面为startTime ===> 用于最小堆timerQueue的排序比较下标
   };
+
+  // 如果启用了性能分析，设置任务的排队状态
   if (enableProfiling) {
     newTask.isQueued = false;
   }
 
+  // 处理延迟任务
   if (startTime > currentTime) {
-    // This is a delayed task.
-    newTask.sortIndex = startTime;
-    push(timerQueue, newTask);
+    // 这是一个延迟任务
+    newTask.sortIndex = startTime; // 设置任务的排序索引为开始时间
+    // 推入最小堆数组结构：比较sortIndex为堆的顺序
+    push(timerQueue, newTask); // 将任务推入定时器队列
+
+    // 检查任务队列是否为空且当前任务是最早到期的延迟任务
     if (peek(taskQueue) === null && newTask === peek(timerQueue)) {
-      // All tasks are delayed, and this is the task with the earliest delay.
       if (isHostTimeoutScheduled) {
-        // Cancel an existing timeout.
+        // 如果已经有一个定时器被安排，取消它
         cancelHostTimeout();
       } else {
-        isHostTimeoutScheduled = true;
+        isHostTimeoutScheduled = true; // 标记定时器已安排
       }
-      // Schedule a timeout.
+      // 安排定时器：就是用setTimeout延时startTime - currentTime执行
+      // 执行timerQueue中到期的任务---统一放进taskQueue中执行
       requestHostTimeout(handleTimeout, startTime - currentTime);
     }
   } else {
-    newTask.sortIndex = expirationTime;
-    push(taskQueue, newTask);
+    // 这是一个立即执行的任务。直接push进taskQueue队列中安排执行
+    newTask.sortIndex = expirationTime; // 设置任务的排序索引为到期时间
+    push(taskQueue, newTask); // 将任务推入任务队列
+
+    // 如果启用了性能分析，标记任务开始时间和排队状态
     if (enableProfiling) {
       markTaskStart(newTask, currentTime);
       newTask.isQueued = true;
     }
-    // Schedule a host callback, if needed. If we're already performing work,
-    // wait until the next time we yield.
+
+    // 如果没有安排主机回调且当前没有执行工作，安排主机回调
     if (!isHostCallbackScheduled && !isPerformingWork) {
-      isHostCallbackScheduled = true;
-      requestHostCallback(flushWork);
+      isHostCallbackScheduled = true; // 标记主机回调已安排
+      requestHostCallback(flushWork); // 请求主机回调
     }
   }
 
+  // 返回新创建的任务对象
   return newTask;
 }
 

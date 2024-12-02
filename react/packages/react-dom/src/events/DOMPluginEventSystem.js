@@ -319,8 +319,12 @@ const listeningMarker =
     .toString(36)
     .slice(2);
 
+/**
+ * 在一个给定的根容器元素上监听所有支持的原生事件的重要部分
+ */
 export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
   if (enableEagerRootListeners) {
+    // 是否已监听过，是则跳出
     if ((rootContainerElement: any)[listeningMarker]) {
       // Performance optimization: don't iterate through events
       // for the same portal container or root node more than once.
@@ -329,7 +333,9 @@ export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
       return;
     }
     (rootContainerElement: any)[listeningMarker] = true;
+    // 初始化时已全部添加好事件名字的set集合了
     allNativeEvents.forEach(domEventName => {
+      // 包含不需要代理的事件名称的集合
       if (!nonDelegatedEvents.has(domEventName)) {
         listenToNativeEvent(
           domEventName,
@@ -348,6 +354,15 @@ export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
   }
 }
 
+/**
+ * 目标元素上监听特定的原生事件
+ * @param {*} domEventName 
+ * @param {*} isCapturePhaseListener 是否捕获阶段监听
+ * @param {*} rootContainerElement  DOM 容器
+ * @param {*} targetElement 目标元素默认为null
+ * @param {*} eventSystemFlags 
+ * @returns 
+ */
 export function listenToNativeEvent(
   domEventName: DOMEventName,
   isCapturePhaseListener: boolean,
@@ -357,9 +372,8 @@ export function listenToNativeEvent(
 ): void {
   let target = rootContainerElement;
 
-  // selectionchange needs to be attached to the document
-  // otherwise it won't capture incoming events that are only
-  // triggered on the document directly.
+  // SelectionChange事件 需要附加到document中
+  // 否则它不会捕获因为是仅在docuemnt上触发的事件。
   if (
     domEventName === 'selectionchange' &&
     (rootContainerElement: any).nodeType !== DOCUMENT_NODE
@@ -370,6 +384,7 @@ export function listenToNativeEvent(
   // register it to the root container. Otherwise, we should
   // register the event to the target element and mark it as
   // a non-delegated event.
+  // 处理非代理事件
   if (
     targetElement !== null &&
     !isCapturePhaseListener &&
@@ -384,12 +399,19 @@ export function listenToNativeEvent(
     // TODO: ideally, we'd eventually apply the same logic to all
     // events from the nonDelegatedEvents list. Then we can remove
     // this special case and use the same logic for all events.
+    // 对于所有非代理事件（除了 scroll），我们将它们的事件监听器附加到
+    // 事件触发的相应元素上。因此，我们可以跳过这一步，因为事件监听器
+    // 已经在之前添加了。然而，我们对 scroll 事件进行特殊处理，因为现实中
+    // 任何元素都可以滚动。
+    // TODO: 最终，我们希望对 nonDelegatedEvents 列表中的所有事件应用相同的逻辑。
+    // 然后我们可以移除这个特殊处理并使用相同的逻辑处理所有事件。
     if (domEventName !== 'scroll') {
       return;
     }
     eventSystemFlags |= IS_NON_DELEGATED;
     target = targetElement;
   }
+  // 获取事件监听器集合
   const listenerSet = getEventListenerSet(target);
   const listenerSetKey = getListenerSetKey(
     domEventName,
@@ -397,6 +419,7 @@ export function listenToNativeEvent(
   );
   // If the listener entry is empty or we should upgrade, then
   // we need to trap an event listener onto the target.
+  // 添加事件监听器
   if (!listenerSet.has(listenerSetKey)) {
     if (isCapturePhaseListener) {
       eventSystemFlags |= IS_CAPTURE_PHASE;
@@ -465,6 +488,7 @@ export function listenToReactEvent(
   }
 }
 
+/** 在一个给定的目标容器上添加特定的原生事件监听器 */
 function addTrappedEventListener(
   targetContainer: EventTarget,
   domEventName: DOMEventName,
@@ -472,6 +496,7 @@ function addTrappedEventListener(
   isCapturePhaseListener: boolean,
   isDeferredListenerForLegacyFBSupport?: boolean,
 ) {
+  // 带有优先级的事件监听器包装
   let listener = createEventListenerWrapperWithPriority(
     targetContainer,
     domEventName,
@@ -479,6 +504,7 @@ function addTrappedEventListener(
   );
   // If passive option is not supported, then the event will be
   // active and not passive.
+  // 确定是否是被动监听器：告诉浏览器在处理某些特定类型的事件（如 touchstart 和 touchmove）时，不会阻止页面的默认行为。这种机制主要用于提高触摸设备上的滚动性能
   let isPassiveListener = undefined;
   if (passiveBrowserEventsSupported) {
     // Browsers introduced an intervention, making these events
@@ -496,23 +522,24 @@ function addTrappedEventListener(
     }
   }
 
+  // 处理旧版 Facebook 支持:enableLegacyFBSupport 就是旧版facebook支持
   targetContainer =
     enableLegacyFBSupport && isDeferredListenerForLegacyFBSupport
       ? (targetContainer: any).ownerDocument
       : targetContainer;
 
+  // 处理延迟监听器: 确保事件监听器只在首次触发后被移除
   let unsubscribeListener;
-  // When legacyFBSupport is enabled, it's for when we
-  // want to add a one time event listener to a container.
-  // This should only be used with enableLegacyFBSupport
-  // due to requirement to provide compatibility with
-  // internal FB www event tooling. This works by removing
-  // the event listener as soon as it is invoked. We could
-  // also attempt to use the {once: true} param on
-  // addEventListener, but that requires support and some
-  // browsers do not support this today, and given this is
-  // to support legacy code patterns, it's likely they'll
-  // need support for such browsers.
+  // 当启用legacyFBSupport时，它是为了当我们
+  // 想要向容器添加一次性事件侦听器。
+  // 这只能与enableLegacyFBSupport一起使用
+  // 由于需要提供兼容性
+  // 内部 FB www 事件工具。这可以通过删除来实现
+  // 事件侦听器一旦被调用。我们可以
+  // 还尝试使用 {once: true} 参数
+  // addEventListener，但这需要支持和一些
+  // 目前浏览器不支持此功能，并且鉴于此
+  // 为了支持遗留代码模式，所以兼容支持。
   if (enableLegacyFBSupport && isDeferredListenerForLegacyFBSupport) {
     const originalListener = listener;
     listener = function(...p) {
@@ -525,8 +552,8 @@ function addTrappedEventListener(
       return originalListener.apply(this, p);
     };
   }
-  // TODO: There are too many combinations here. Consolidate them.
-  if (isCapturePhaseListener) {
+  // 如果没有启用延迟，则添加事件监听器
+  if (isCapturePhaseListener) {// 捕获阶段
     if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventCaptureListenerWithPassiveFlag(
         targetContainer,
@@ -541,7 +568,7 @@ function addTrappedEventListener(
         listener,
       );
     }
-  } else {
+  } else { // 冒泡阶段
     if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventBubbleListenerWithPassiveFlag(
         targetContainer,
