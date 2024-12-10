@@ -137,6 +137,7 @@ import {resetChildFibers} from './ReactChildFiber.old';
 import {createScopeInstance} from './ReactFiberScope.old';
 import {transferActualDuration} from './ReactProfilerTimer.old';
 
+/** 标记Update标记falgs */
 function markUpdate(workInProgress: Fiber) {
   // Tag the fiber with an update effect. This turns a Placement into
   // a PlacementAndUpdate.
@@ -148,11 +149,30 @@ function markRef(workInProgress: Fiber) {
 }
 
 let appendAllChildren;
+/**
+ * 更新宿主容器（如 DOM 容器）的核心逻辑
+ */
 let updateHostContainer;
+/**
+ * 突变模式下：主要是设置workInProgress.updateQueue属性 和 和 标记wipfiber节点flags为Update
+ * 
+ * 被处理完的props会被赋值给workInProgress.updateQueue，并最终会在commit阶段被渲染在页面上
+ */
 let updateHostComponent;
 let updateHostText;
+// 判断当前渲染器支持哪种更新机制的布尔值:涉及到 React 如何与宿主环境（如浏览器 DOM 或其他环境）交互以应用更新。不同的环境可能支持不同的更新模式
+// 1. Mutation 模式 (supportsMutation)
+// 描述：这是最常见的更新方式，React 直接修改现有的 DOM 节点来反映变化。
+// 适用场景：适用于大多数现代浏览器和标准 DOM 环境。
+// 优点：直接操作 DOM，性能优化较为成熟。
+// 缺点：可能会导致某些情况下难以追踪或调试DOM的变化
+// 2. Persistence 模式 (supportsPersistence)
+// 描述：这种模式下，React 不直接修改现有的 DOM 节点，而是创建新的节点并在需要时替换旧的节点。这种方式通常用于不可变的数据结构或虚拟 DOM 实现中。
+// 适用场景：适用于那些不支持直接DOM突变的环境，或者需要更精确控制DOM状态的场景。
+// 优点：可以更好地保持数据的一致性和可预测性，便于实现时间旅行调试等功能。
+// 缺点：可能会引入额外的开销，因为每次更新都需要创建新节点。
 if (supportsMutation) {
-  // Mutation mode
+  // Mutation mode 主要用于浏览器ReactDOM环境
 
   appendAllChildren = function(
     parent: Instance,
@@ -194,10 +214,16 @@ if (supportsMutation) {
   updateHostContainer = function(workInProgress: Fiber) {
     // Noop
   };
+  /**
+   * 主要更新 workInProgress.updateQueue 的值（基于newProps计算）和 标记flags为Update
+   * 
+   * 突变模式下：主要是处理newProps的更新，newProps没有变化直接return null
+   */
   updateHostComponent = function(
     current: Fiber,
     workInProgress: Fiber,
     type: Type,
+    /** workInProgress.pendingProps */
     newProps: Props,
     rootContainerInstance: Container,
   ) {
@@ -214,11 +240,16 @@ if (supportsMutation) {
     // have newProps so we'll have to reuse them.
     // TODO: Split the update API as separate for the props vs. children.
     // Even better would be if children weren't special cased at all tho.
+    // 如果当前fiber是因为其子节点更新而触发更新，则可能不会接收到新的属性 (newProps)。在这种情况下，React 将不得不重用旧的属性 (oldProps)
+    // 当前 fiber 的状态节点，即现有的 DOM 实例
     const instance: Instance = workInProgress.stateNode;
+    // 当前的主机上下文，包含有关渲染环境的信息
     const currentHostContext = getHostContext();
-    // TODO: Experiencing an error where oldProps is null. Suggests a host
-    // component is hitting the resume path. Figure out why. Possibly
-    // related to `hidden`.
+    /**
+     * 计算最新的updateQueue值
+     * 
+     * 该函数的主要目的是比较旧属性和新属性之间的差异，并返回一个包含需要应用到 DOM 的变更列表
+     */
     const updatePayload = prepareUpdate(
       instance,
       type,
@@ -232,6 +263,7 @@ if (supportsMutation) {
     // If the update payload indicates that there is a change or if there
     // is a new ref we mark this as an update. All the work is done in commitWork.
     if (updatePayload) {
+      // 标记更新
       markUpdate(workInProgress);
     }
   };
@@ -441,40 +473,52 @@ if (supportsMutation) {
       pendingChildren: ChildSet,
       ...
     } = workInProgress.stateNode;
+    // 是否存在任何副作用（effect），如果没有副作用，则意味着子节点没有发生变化
     const childrenUnchanged = workInProgress.firstEffect === null;
     if (childrenUnchanged) {
+      // 无变化，直接复用现有的实例，不做任何操作
       // No changes, just reuse the existing instance.
     } else {
       const container = portalOrRoot.containerInfo;
+      // 容器创建一个新的子节点集合
       const newChildSet = createContainerChildSet(container);
       // If children might have changed, we have to add them all to the set.
       appendAllChildrenToContainer(newChildSet, workInProgress, false, false);
       portalOrRoot.pendingChildren = newChildSet;
       // Schedule an update on the container to swap out the container.
+      // 标记更新Update
       markUpdate(workInProgress);
       finalizeContainerChildren(container, newChildSet);
     }
   };
+  /**
+   * 非突变模式下逻辑：主要是设置workInProgress.stateNode属性
+   */
   updateHostComponent = function(
     current: Fiber,
     workInProgress: Fiber,
     type: Type,
+    /** workInProgress.pendingProps */
     newProps: Props,
     rootContainerInstance: Container,
   ) {
+    // currentInstance：当前 fiber 的状态节点，即现有的 DOM 实例。
+    // oldProps：当前fiber上一次渲染时保存的属性
     const currentInstance = current.stateNode;
     const oldProps = current.memoizedProps;
     // If there are no effects associated with this node, then none of our children had any updates.
     // This guarantees that we can reuse all of them.
+    // 检查是否有子节点或属性变更
     const childrenUnchanged = workInProgress.firstEffect === null;
     if (childrenUnchanged && oldProps === newProps) {
-      // No changes, just reuse the existing instance.
-      // Note that this might release a previous clone.
+      // childrenUnchanged：检查是否存在任何副作用（effect），如果没有副作用，则意味着子节点没有发生变化。
+      // 如果子节点和属性都没有变化，则直接复用现有的实例，不做任何操作并返回
       workInProgress.stateNode = currentInstance;
       return;
     }
     const recyclableInstance: Instance = workInProgress.stateNode;
     const currentHostContext = getHostContext();
+    // 更新updatePayload: 如果新旧属性不同，则调用 prepareUpdate 函数来计算需要应用到 DOM 上的变化（即更新载荷）。这可能包括属性、样式等的变化
     let updatePayload = null;
     if (oldProps !== newProps) {
       updatePayload = prepareUpdate(
@@ -486,12 +530,15 @@ if (supportsMutation) {
         currentHostContext,
       );
     }
+    // 再次检查是否需要更新
     if (childrenUnchanged && updatePayload === null) {
       // No changes, just reuse the existing instance.
       // Note that this might release a previous clone.
+      // 如果子节点和属性仍然没有变化，则再次复用现有的实例，不做任何操作并返回。
       workInProgress.stateNode = currentInstance;
       return;
     }
+    // 否则创建新的实例
     const newInstance = cloneInstance(
       currentInstance,
       updatePayload,
@@ -502,6 +549,7 @@ if (supportsMutation) {
       childrenUnchanged,
       recyclableInstance,
     );
+    // 处理初始化副作用
     if (
       finalizeInitialChildren(
         newInstance,
@@ -513,14 +561,17 @@ if (supportsMutation) {
     ) {
       markUpdate(workInProgress);
     }
+    // 更新 stateNode为新实例 并处理子节点
     workInProgress.stateNode = newInstance;
     if (childrenUnchanged) {
       // If there are no other effects in this tree, we need to flag this node as having one.
       // Even though we're not going to use it for anything.
       // Otherwise parents won't know that there are new children to propagate upwards.
+      // 如果子节点没有变化，则标记更新以通知父节点有新的子节点需要传播
       markUpdate(workInProgress);
     } else {
       // If children might have changed, we have to add them all to the set.
+      // 如果子节点发生了变化，则将所有子节点添加到新的实例中。
       appendAllChildren(newInstance, workInProgress, false, false);
     }
   };
@@ -642,11 +693,24 @@ function cutOffTailIfNeeded(
   }
 }
 
+/**
+ * completeWork也是针对不同fiber.tag调用不同的处理逻辑
+ * 
+ * 该方法主要针对Host类型fiber节点处理逻辑
+ *  - mount下：更新wipFiber的stateNode(dom实例)，初始化新建的DOM状态和合成事件等
+ *  - update下：wipFiber的updateQueue，其他类型没有特殊逻辑
+ *  - 还会增加flags标记：Update和ref
+ * @param {*} current 
+ * @param {*} workInProgress 
+ * @param {*} renderLanes 
+ * @returns 
+ */
 function completeWork(
   current: Fiber | null,
   workInProgress: Fiber,
   renderLanes: Lanes,
 ): Fiber | null {
+  /** workInProgress.pendingProps; */
   const newProps = workInProgress.pendingProps;
 
   switch (workInProgress.tag) {
@@ -662,6 +726,7 @@ function completeWork(
     case MemoComponent:
       return null;
     case ClassComponent: {
+      // Class类型不做处理
       const Component = workInProgress.type;
       if (isLegacyContextProvider(Component)) {
         popLegacyContext(workInProgress);
@@ -677,6 +742,7 @@ function completeWork(
         fiberRoot.context = fiberRoot.pendingContext;
         fiberRoot.pendingContext = null;
       }
+      // 挂载时
       if (current === null || current.child === null) {
         // If we hydrated, pop so that we can delete any remaining children
         // that weren't hydrated.
@@ -686,10 +752,7 @@ function completeWork(
           // the commit side-effects on the root.
           markUpdate(workInProgress);
         } else if (!fiberRoot.hydrate) {
-          // Schedule an effect to clear this container at the start of the next commit.
-          // This handles the case of React rendering into a container with previous children.
-          // It's also safe to do for updates too, because current.child would only be null
-          // if the previous render was null (so the the container would already be empty).
+          // 设置fiber.flags标记
           workInProgress.flags |= Snapshot;
         }
       }
@@ -697,9 +760,20 @@ function completeWork(
       return null;
     }
     case HostComponent: {
+      /**
+       * HostComponent的pendingProps为原生dom元素组件的一些props属性：
+       * 
+       * 如onClick、onChange等回调函数的注册
+          处理style prop
+          处理DANGEROUSLY_SET_INNER_HTML prop
+          处理children prop
+       */
       popHostContext(workInProgress);
       const rootContainerInstance = getRootHostContainer();
       const type = workInProgress.type;
+      // 根据current === null ?判断是mount还是update
+      // workInProgress.stateNode != null ?（即该Fiber节点是否存在对应的DOM节点
+      // update的情况
       if (current !== null && workInProgress.stateNode != null) {
         updateHostComponent(
           current,
@@ -712,7 +786,12 @@ function completeWork(
         if (current.ref !== workInProgress.ref) {
           markRef(workInProgress);
         }
-      } else {
+      }
+      // mount 情况: 主要3件事
+      // 1.为Fiber节点生成对应的DOM节点
+      // 2.将子孙DOM节点插入刚生成的DOM节点中
+      // 3.与update逻辑中的updateHostComponent类似的处理props的过程
+      else {
         if (!newProps) {
           invariant(
             workInProgress.stateNode !== null,
@@ -744,6 +823,7 @@ function completeWork(
             markUpdate(workInProgress);
           }
         } else {
+          // 创建dom对象
           const instance = createInstance(
             type,
             newProps,
@@ -752,14 +832,17 @@ function completeWork(
             workInProgress,
           );
 
+          // 将子孙dom节点对应fiber的stateNode插入instance -dom下 
           appendAllChildren(instance, workInProgress, false, false);
-
+          // 设置wip的stateNode值为新建的dom实例
           workInProgress.stateNode = instance;
 
           // Certain renderers require commit-time effects for initial mount.
           // (eg DOM renderer supports auto-focus for certain elements).
           // Make sure such renderers get scheduled for later work.
           if (
+            // 检查是否需要为新创建的 DOM 元素设置任何初始状态或行为
+            // 3. 设置DOM对象的属性, 合成事件的绑定等
             finalizeInitialChildren(
               instance,
               type,
@@ -768,6 +851,7 @@ function completeWork(
               currentHostContext,
             )
           ) {
+            // 设置fiber.flags标记(Update)
             markUpdate(workInProgress);
           }
         }

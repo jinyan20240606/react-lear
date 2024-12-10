@@ -130,6 +130,7 @@ export const enableLegacyFBSupport = false;
 export const deferRenderPhaseUpdateToNextBatch = true;
 
 // Replacement for runWithPriority in React internals.
+/** 指示是否将更新优先级与调度器解耦。如果解耦，则需要手动管理更新优先级 */
 export const decoupleUpdatePriorityFromScheduler = false;
 
 export const enableDiscreteEventFlushingChange = false;

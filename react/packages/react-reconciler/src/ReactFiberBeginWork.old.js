@@ -232,14 +232,16 @@ if (__DEV__) {
 }
 
 /**
+ * 主要任务：构建生成workInProgress.child 子fiber节点（基于nextChildren和current.child进行diff生成)
+ * 
  * diff子树: 将current.child与nextChildren的diff结果即新fiber树赋值到 workInProgress.child 属性（child值就是App起始的fiber树了）
  * 
  * 目前workInProgress是新建的，还没有child值，diff对比就是为了填充其child值，形成一个完整的AB双缓存树
  * 
  * 1. mount环境：调用mountChildFibers
  * 2. update环境：调用reconcileChildFibers
- * @param {*} current 上次渲染的页面真实rootFiber根节点
- * @param {*} workInProgress WIP的rootFiber副本节点
+ * @param {*} current 对于hostRoot类型时：上次渲染的页面真实rootFiber根节点
+ * @param {*} workInProgress 对于HostRoot类型时：WIP的rootFiber副本节点
  * @param {*} nextChildren 要更新的react元素子树
  * @param {*} renderLanes  
  */
@@ -866,6 +868,19 @@ function updateBlock<Props, Data>(
   return workInProgress.child;
 }
 
+/**
+ * 与updateHostRoot核心思路类似:以下3个步骤
+ * 1. 计算memoizedState值：根据fiber.pendingProps, fiber.updateQueue等输入数据状态, 计算fiber.memoizedState作为输出状态
+ * 2. 获取nextChildren：获取reactELement子树
+      1. 构建React.Component实例--把新实例挂载到fiber.stateNode上
+      2. 执行render之前的生命周期函数
+      3. 执行render方法, 获取nextChildren（ReactElement）用于后面diff
+      4. 根据实际情况, 设置fiber.flags
+   3. 根据nextChildren即ReactElement对象, 调用reconcileChildren最终生成Fiber子节点(只生成次级子节点)
+        根据实际情况, 设置fiber.flags
+
+  @return 最终返回生成的子fiber节点：workInProgress.child;
+ */
 function updateClassComponent(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -1024,10 +1039,6 @@ function finishClassComponent(
   // React DevTools reads this flag.
   workInProgress.flags |= PerformedWork;
   if (current !== null && didCaptureError) {
-    // If we're recovering from an error, reconcile without reusing any of
-    // the existing children. Conceptually, the normal children and the children
-    // that are shown on error are two different sets, so we shouldn't reuse
-    // normal children even if their identities match.
     forceUnmountCurrentAndReconcile(
       current,
       workInProgress,
@@ -1066,7 +1077,7 @@ function pushHostRootContext(workInProgress) {
 }
 
 /**
- * beginWork--switch--HostRoot分支实际方法
+ * beginWork--switch--HostRoot分支实际方法：目的是利用current.child和nextCHildren生成workInPropgress的child-fiber节点
  * 1. processUpdateQueue：计算workInProgress.updateQueue要更新workInProgress.memoizedState值
  * 2. reconcileChildren：协调diff对比 children子树
  * 
@@ -1155,6 +1166,11 @@ function updateHostRoot(current, workInProgress, renderLanes) {
   return workInProgress.child;
 }
 
+/**
+ * 普通 DOM 标签类型的节点(如div,span,p),会进入updateHostComponent:
+ * 
+ * 核心逻辑：3个主要的事
+ */
 function updateHostComponent(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -1165,11 +1181,11 @@ function updateHostComponent(
   if (current === null) {
     tryToClaimNextHydratableInstance(workInProgress);
   }
-
+  // 1. 状态计算, 由于HostComponent是无状态组件, 所以只需要收集 nextProps即可, 它没有 memoizedState
   const type = workInProgress.type;
   const nextProps = workInProgress.pendingProps;
   const prevProps = current !== null ? current.memoizedProps : null;
-
+  // 2. 获取下级`ReactElement`对象
   let nextChildren = nextProps.children;
   const isDirectTextChild = shouldSetTextContent(type, nextProps);
 
@@ -1178,14 +1194,17 @@ function updateHostComponent(
     // case. We won't handle it as a reified child. We will instead handle
     // this in the host environment that also has access to this prop. That
     // avoids allocating another HostText fiber and traversing it.
+    // 如果子节点只有一个文本节点, 不用再创建一个HostText类型的fiber
     nextChildren = null;
   } else if (prevProps !== null && shouldSetTextContent(type, prevProps)) {
     // If we're switching from a direct text child to a normal child, or to
     // empty, we need to schedule the text content to be reset.
+    // 特殊操作需要设置fiber.flags
     workInProgress.flags |= ContentReset;
   }
-
+  // 特殊操作需要设置fiber.flags
   markRef(current, workInProgress);
+  // 3. 根据`ReactElement`对象, 调用`reconcileChildren`生成`Fiber`子节点(只生成`次级子节点`)
   reconcileChildren(current, workInProgress, nextChildren, renderLanes);
   return workInProgress.child;
 }
@@ -3120,11 +3139,15 @@ function remountFiber(
 }
 
 /**
- * beginWork：
+ * beginWork：主要任务是利用current.child和nextCHildren生成workInPropgress的child-fiber子节点
  * 
  * 1. update时：如果current存在，在满足一定优化条件时可以复用current节点，这样就能克隆current.child作为workInProgress.child，而不需要新建workInProgress.child。
 
    2. mount时：若current === null。会根据fiber.tag不同，创建不同类型的子Fiber节点
+
+   3. 根据 ReactElement对象创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
+      设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
+      设置fiber.stateNode局部状态(如Class类型节点: fiber.stateNode=new Class())
  * 
  * @param {*} current mount时为上次渲染的页面真实rootFiber根节点
  * @param {*} workInProgress mount时为正在处理的rootFiber副本节点----双缓存流程
@@ -3367,7 +3390,7 @@ function beginWork(
     didReceiveUpdate = false;
   }
 
-  // 进入 beginWork 阶段之前，清除当前 Fiber 节点的待处理更新优先级
+  // 进入 beginWork 阶段之前，设置当前fiber优先级lanes为NoLanes最高优先级
   workInProgress.lanes = NoLanes;
   // 处理不同类型的 Fiber 节点
   switch (workInProgress.tag) {

@@ -864,6 +864,14 @@ export function diffProperties(
 }
 
 // Apply the diff.
+/**
+ * 将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的内容渲染在页面上
+ * @param {*} domElement 
+ * @param {*} updatePayload 
+ * @param {*} tag 
+ * @param {*} lastRawProps 
+ * @param {*} nextRawProps 
+ */
 export function updateProperties(
   domElement: Element,
   updatePayload: Array<any>,

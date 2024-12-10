@@ -110,6 +110,7 @@ export function onCommitRoot(
   }
 }
 
+/** REACT devtools hook注入相关 */
 export function onCommitUnmount(fiber: Fiber) {
   if (injectedHook && typeof injectedHook.onCommitFiberUnmount === 'function') {
     try {

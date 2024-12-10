@@ -6,7 +6,7 @@
  *
  * @flow
  * 
- * 标记，对fiber到commit阶段的DOM操作标记：增删改等
+ * 标记，对fiber到commit阶段的DOM操作标记和副作用标记：增删改等
  * 
  */
 
@@ -33,7 +33,7 @@ export const DidCapture = /*                   */ 0b000000000001000000;
 export const Ref = /*                          */ 0b000000000010000000;
 /** 节点需要进行快照操作 */
 export const Snapshot = /*                     */ 0b000000000100000000;
-/** 节点有一个被动的副作用需要执行。 */
+/** Passive标记：只会在使用了hook对象的function类型的节点上存在。 */
 export const Passive = /*                      */ 0b000000001000000000;
 // TODO (effects) Remove this bit once the new reconciler is synced to the old.
 export const PassiveUnmountPendingDev = /*     */ 0b000010000000000000;

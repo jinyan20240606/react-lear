@@ -189,6 +189,11 @@ export function getFiberCurrentPropsFromNode(
   return (node: any)[internalPropsKey] || null;
 }
 
+/**
+ * 为node添加一个随机key存储当前props：(node: any)[internalPropsKey] = props;
+ * @param {*} node 
+ * @param {*} props 
+ */
 export function updateFiberProps(
   node: Instance | TextInstance | SuspenseInstance,
   props: Props,

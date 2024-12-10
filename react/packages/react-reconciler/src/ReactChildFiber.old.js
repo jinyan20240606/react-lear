@@ -381,7 +381,7 @@ function ChildReconciler(shouldTrackSideEffects) {
   /**
    * 移动节点判断：
    * 1. newFiber.alternate存在且判断oldIndex < lastPlacedIndex，小于是需要移动，且添加placement标记，大于等于就不需要移动
-   * 2. newFiber.alternate不存在说明不可复用是插入新节点，直接添加Palcement标记
+   * 2. newFiber.alternate不存在说明不可复用是插入新节点，直接添加Placement标记
    * @param {*} newFiber 
    * @param {*} lastPlacedIndex 
    * @param {*} newIndex 
@@ -406,7 +406,7 @@ function ChildReconciler(shouldTrackSideEffects) {
     }
     // 处理页面dom上的现有子节点
     const current = newFiber.alternate;
-    // 现有dom上现有的子节点current存在，说明可以复用
+    // 现有dom上现有的子节点current存在，说明可以考虑复用
     if (current !== null) {
       // 判断是否需要移动
       // 如果 oldIndex 小于 lastPlacedIndex，说明需要移动子节点。
@@ -1238,10 +1238,10 @@ function ChildReconciler(shouldTrackSideEffects) {
    * 1. currentFirstChild有值即更新时：判断是否可复用fiber节点，不能复用则标记删除旧的跳出循环，继续走下面的新建逻辑
    * 2. currentFirstChild无值即挂载时：只创建fiber节点，关联return属性即可
    * @param {*} returnFiber workInProgress 
-   * @param {*} currentFirstChild mount时为null
+   * @param {*} currentFirstChild mount时为null，update时为current.child
    * @param {*} element 待更新的react元素子树
    * @param {*} lanes renderLanes
-   * @returns 返回diff后的新fiber节点（复用的或新建的）
+   * @returns 返回diff后的新fiber节点作为赋值workInProgress.child用（复用的或新建的）
    */
   function reconcileSingleElement(
     returnFiber: Fiber,
@@ -1407,17 +1407,17 @@ function ChildReconciler(shouldTrackSideEffects) {
   // itself. They will be added to the side-effect list as we pass through the
   // children and the parent.
   /**
-   * 主要是协调chidlren进行diff对比，高效更新
+   * 主要是协调chidlren进行diff对比，高效更新，计算生成子fiber节点（returnFiber的child值）
    * 
    * 1. 对于children是单个一级子元素：主要执行 reconcileSingleXXXElement 方法
    * 2. 对于children是多个一级子元素：主要执行 reconcileChildrenArray
-   * 3. 删除标记的会加到workInProgress的effectList链表里，插入的更新的不会，待细看TODO
-   *    - 每个fiber节点都会对应加上flags标记
+   * 3. 删除标记的会加到workInProgress的effectList链表里，插入的更新的只加flags标记（后续在completeWork中会统一将flags标记的fiber节点追加到加到父节点的effectList链表里，一直追到rootFiber）
+   * 4. 每个fiber节点都会对应加上flags标记
    * @param {*} returnFiber workInProgress
    * @param {*} currentFirstChild 
    * @param {*} newChild 
    * @param {*} lanes 
-   * @returns 返回diff后的新fiber链表树或null---作为workInProgress.child
+   * @returns 返回diff后的新fiber链表节点或null---作为生成workInProgress.child
    */
   function reconcileChildFibers(
     /** workInProgress */

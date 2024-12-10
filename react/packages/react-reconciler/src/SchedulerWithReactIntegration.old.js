@@ -138,6 +138,12 @@ function reactPriorityToSchedulerPriority(reactPriorityLevel) {
   }
 }
 
+/**
+ * 以指定的优先级运行给定的函数
+ * @param {*} reactPriorityLevel 
+ * @param {*} fn 
+ * @returns 
+ */
 export function runWithPriority<T>(
   reactPriorityLevel: ReactPriorityLevel,
   fn: () => T,
@@ -191,6 +197,9 @@ export function cancelCallback(callbackNode: mixed) {
   }
 }
 
+/**
+ * 检测同步任务, 如果有则主动调用flushSyncCallbackQueue(无需再次等待scheduler调度), 再次进入fiber树构造循环
+ */
 export function flushSyncCallbackQueue() {
   if (immediateQueueCallbackNode !== null) {
     const node = immediateQueueCallbackNode;

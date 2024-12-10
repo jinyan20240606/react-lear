@@ -222,16 +222,28 @@ export function getPublicInstance(instance: Instance): * {
   return instance;
 }
 
+/**
+ * commit前的准备工作：负责保存当前的事件交互状态和焦点类的选择信息，以确保在更新过程中不会触发不必要的事件，并且可以在更新后恢复这些状态
+ * 
+ * 禁用了事件监听器。这是因为DOM更新可能会触发一些不需要的事件，这些事件可能会干扰到更新过程或者导致意外的行为
+ * 
+ * @return 返回活跃实例：值可能在commit阶段的后续部分中使用，比如用于恢复焦点等操作
+ */
 export function prepareForCommit(containerInfo: Container): Object | null {
+  // 保存当前的事件监听器是否启用的状态。
   eventsEnabled = ReactBrowserEventEmitterIsEnabled();
+  // 获取当前的选择信息（如文本选择或焦点位置），以便之后可以恢复。
   selectionInformation = getSelectionInformation();
   let activeInstance = null;
+  // 处理当前获得焦点的元素
   if (enableCreateEventHandleAPI) {
     const focusedElem = selectionInformation.focusedElem;
     if (focusedElem !== null) {
+      // 如果存在获得焦点的元素，则尝试找到对应的React实例。，=====> 作为活跃实例
       activeInstance = getClosestInstanceFromNode(focusedElem);
     }
   }
+  // 禁用事件监听器，以防止在DOM更新期间触发不必要的事件。
   ReactBrowserEventEmitterSetEnabled(false);
   return activeInstance;
 }
@@ -315,6 +327,16 @@ export function finalizeInitialChildren(
   return shouldAutoFocusHostComponent(type, props);
 }
 
+/**
+ * React 内部用于准备更新 DOM 元素的函数。它接受当前的 DOM 元素、元素类型、旧属性和新属性，以及根容器实例和主机上下文作为参数。该函数的主要目的是比较旧属性和新属性之间的差异，并返回一个包含需要应用到 DOM 的变更列表
+ * @param {*} domElement 
+ * @param {*} type 
+ * @param {*} oldProps 
+ * @param {*} newProps 
+ * @param {*} rootContainerInstance 
+ * @param {*} hostContext 
+ * @returns 
+ */
 export function prepareUpdate(
   domElement: Instance,
   type: string,
@@ -413,6 +435,15 @@ export function commitMount(
   }
 }
 
+/**
+ * 终会在updateDOMProperties中将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的内容渲染在页面上
+ * @param {*} domElement 
+ * @param {*} updatePayload 
+ * @param {*} type 
+ * @param {*} oldProps 
+ * @param {*} newProps 
+ * @param {*} internalInstanceHandle 
+ */
 export function commitUpdate(
   domElement: Instance,
   updatePayload: Array<mixed>,
@@ -447,6 +478,13 @@ export function appendChild(
   parentInstance.appendChild(child);
 }
 
+/**
+ * 1. 如果容器为HostPortal类型且是一个注释节点，则通过 insertBefore 方法将子节点插入到容器之前的位置，实现portal组件的精确的注释占位效果置
+ * 2. 对于非注释节点的容器，直接调用 appendChild 方法
+ * 3. 为了确保在移动 Safari 上点击事件可以正确冒泡，如果容器不是 React 根容器且没有点击事件监听器，则为容器的父节点添加一个点击事件监听器
+ * @param {*} container 
+ * @param {*} child 
+ */
 export function appendChildToContainer(
   container: Container,
   child: Instance | TextInstance,

@@ -214,6 +214,16 @@ function safelyCallDestroy(current: Fiber, destroy: () => void) {
   }
 }
 
+/**
+ * 与Snapshot标记相关的类型只有ClassComponent和HostRoot
+ * 
+ * 1. 主要针对classComponent类型组件处理
+ *    - getSnapshotBeforeUpdate是在commit阶段内的before mutation阶段调用的，由于commit阶段是同步的，所以不会遇到多次调用的问题
+ * 2. 对于HostRoot类型节点, 调用clearContainer清空了容器节点(即div#root这个 dom 节点).
+ * @param {*} current 
+ * @param {*} finishedWork 
+ * @returns 
+ */
 function commitBeforeMutationLifeCycles(
   current: Fiber | null,
   finishedWork: Fiber,
@@ -306,8 +316,13 @@ function commitBeforeMutationLifeCycles(
   );
 }
 
+/**
+ * 该方法会遍历FunctionComponentUpdateQueue的effectList，执行每个effect的destroy销毁方法：如包含执行所有useLayoutEffect hook的销毁函数
+ */
 function commitHookEffectListUnmount(tag: number, finishedWork: Fiber) {
+  // 1- 读取当前fiber的updateQueue，
   const updateQueue: FunctionComponentUpdateQueue | null = (finishedWork.updateQueue: any);
+  // 2- 拿到更新队列中的lastEffect副作用链表
   const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
   if (lastEffect !== null) {
     const firstEffect = lastEffect.next;
@@ -326,6 +341,9 @@ function commitHookEffectListUnmount(tag: number, finishedWork: Fiber) {
   }
 }
 
+/**
+ * 遍历updateQueue链表，执行子孙useLayoutEffect类型的副作用回调，更新destroy属性
+ */
 function commitHookEffectListMount(tag: number, finishedWork: Fiber) {
   const updateQueue: FunctionComponentUpdateQueue | null = (finishedWork.updateQueue: any);
   const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
@@ -376,6 +394,10 @@ function commitHookEffectListMount(tag: number, finishedWork: Fiber) {
   }
 }
 
+/**
+ * 针对函数组件的FunctionComponentUpdateQueue的effectList链表遍历，统一入队 被动副作用标记类型即useEffect类型的effect
+ * @param {*} finishedWork 
+ */
 function schedulePassiveEffects(finishedWork: Fiber) {
   const updateQueue: FunctionComponentUpdateQueue | null = (finishedWork.updateQueue: any);
   const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
@@ -451,6 +473,19 @@ export function commitPassiveEffectDurations(
   }
 }
 
+/**
+ * 根据不同fiber.tag做逻辑处理
+ * 1. 对于ClassComponent节点, 通过current === null?区分是mount还是update,调用生命周期函数componentDidMount或componentDidUpdate, 调用update.callback回调函数:如: this.setState({}, callback).
+ * 2. 对应函数组件
+ *    - 他会调用useLayoutEffect hook的回调函数
+ *    - 统一入队被动副作用全局队列：useEffect的销毁与回调函数
+ * 3. 对于HostComponent：处理些autoFocus逻辑
+ * @param {*} finishedRoot 
+ * @param {*} current 
+ * @param {*} finishedWork 
+ * @param {*} committedLanes 
+ * @returns 
+ */
 function commitLifeCycles(
   finishedRoot: FiberRoot,
   current: Fiber | null,
@@ -487,6 +522,7 @@ function commitLifeCycles(
     case ClassComponent: {
       const instance = finishedWork.stateNode;
       if (finishedWork.flags & Update) {
+        // 区分挂载阶段
         if (current === null) {
           // We could update instance props and state here,
           // but instead we rely on them being set during last render.
@@ -532,7 +568,9 @@ function commitLifeCycles(
           } else {
             instance.componentDidMount();
           }
-        } else {
+        }
+        // 区分更新阶段
+        else {
           const prevProps =
             finishedWork.elementType === finishedWork.type
               ? current.memoizedProps
@@ -626,9 +664,7 @@ function commitLifeCycles(
             }
           }
         }
-        // We could update instance props and state here,
-        // but instead we rely on them being set during last render.
-        // TODO: revisit this when we implement resuming.
+        // 处理update回调函数 如: this.setState({}, callback)
         commitUpdateQueue(finishedWork, updateQueue, instance);
       }
       return;
@@ -863,6 +899,18 @@ function commitDetachRef(current: Fiber) {
 // User-originating errors (lifecycles and refs) should not interrupt
 // deletion, so don't let them throw. Host-originating errors should
 // interrupt deletion, so it's okay
+/**
+ * 根据current.tag类型不同逻辑处理
+ * - 函数组件类型：遍历FunctionComponentUpdateQueue的effectList链表
+ *    - 调度useEffect的销毁函数：对于useEffect这种被动 Effect (HookPassive)，将它们加入待处理的被动 Effect 销毁队列中
+ *    - 对于其他类型的 Effect，直接调用其 destroy 方法进行清理
+ * - 类组件：移除ref引用+调用实例的componentWillUnmount钩子
+ * - HostComponent：移除Ref引用
+ * @param {*} finishedRoot 
+ * @param {*} current 
+ * @param {*} renderPriorityLevel 
+ * @returns 
+ */
 function commitUnmount(
   finishedRoot: FiberRoot,
   current: Fiber,
@@ -884,11 +932,14 @@ function commitUnmount(
 
           let effect = firstEffect;
           do {
+            
             const {destroy, tag} = effect;
             if (destroy !== undefined) {
               if ((tag & HookPassive) !== NoHookEffect) {
+                // 对于被动 Effect (HookPassive)，将它们加入待处理的被动 Effect 列表中
                 enqueuePendingPassiveHookEffectUnmount(current, effect);
               } else {
+                // 对于其他类型的 Effect如useLayoutEffect，直接调用其 destroy 方法进行清理
                 if (
                   enableProfilerTimer &&
                   enableProfilerCommitHooks &&
@@ -962,6 +1013,9 @@ function commitUnmount(
   }
 }
 
+/**
+ * 递归执行 commitUnmount 子树的卸载工作
+ */
 function commitNestedUnmounts(
   finishedRoot: FiberRoot,
   root: Fiber,
@@ -1001,6 +1055,10 @@ function commitNestedUnmounts(
   }
 }
 
+/**
+ * 重置fiber上的effect，updateQueue等相关属性为null
+ * @param {*} fiber 
+ */
 function detachFiberMutation(fiber: Fiber) {
   // Cut off the return pointers to disconnect it from the tree. Ideally, we
   // should clear the child pointer of the parent alternate to let this
@@ -1145,6 +1203,15 @@ function getHostSibling(fiber: Fiber): ?Instance {
   }
 }
 
+/**
+ * 递归所有DOM类型的子节点，执行插入操作
+ * 
+ * 1. 获取父级DOM节点。其中finishedWork为传入的Fiber节点
+ * 2. 获取Fiber节点的DOM兄弟节点
+ * 3. 当前节点下递归插入：根据DOM兄弟节点是否存在决定调用parentNode.insertBefore或parentNode.appendChild执行DOM插入操作
+ * @param {*} finishedWork finishedWork为传入的Fiber节点
+ * @returns 
+ */
 function commitPlacement(finishedWork: Fiber): void {
   if (!supportsMutation) {
     return;
@@ -1156,6 +1223,7 @@ function commitPlacement(finishedWork: Fiber): void {
   // Note: these two variables *must* always be updated together.
   let parent;
   let isContainer;
+  // 父级DOM节点
   const parentStateNode = parentFiber.stateNode;
   switch (parentFiber.tag) {
     case HostComponent:
@@ -1190,10 +1258,12 @@ function commitPlacement(finishedWork: Fiber): void {
     parentFiber.flags &= ~ContentReset;
   }
 
+  // 获取Fiber节点的DOM兄弟节点
   const before = getHostSibling(finishedWork);
   // We only have the top Fiber that was inserted but we need to recurse down its
   // children to find all the terminal nodes.
   if (isContainer) {
+    // 主要HostPortal的容器情况下，父节点可能是注释节点，为了达到将组件精确挂载到指定注释节点占位的位置
     insertOrAppendPlacementNodeIntoContainer(finishedWork, before, parent);
   } else {
     insertOrAppendPlacementNode(finishedWork, before, parent);
@@ -1231,6 +1301,12 @@ function insertOrAppendPlacementNodeIntoContainer(
   }
 }
 
+/**
+ * 递归遍历 Fiber 树，并根据需要将所有孩子新创建的宿主节点（HostComponent 或 HostText）依次插入到 DOM 中，或者将其子节点添加到父节点之下
+ * @param {*} node 当前正在处理的 Fiber 节点
+ * @param {*} before 一个可选参数，表示在哪个 DOM 节点之前插入新的节点。如果为 null 或者 undefined，则直接追加到父节点末尾
+ * @param {*} parent DOM 元素的实例，即新节点将要被插入或附加到的父节点
+ */
 function insertOrAppendPlacementNode(
   node: Fiber,
   before: ?Instance,
@@ -1238,6 +1314,7 @@ function insertOrAppendPlacementNode(
 ): void {
   const {tag} = node;
   const isHost = tag === HostComponent || tag === HostText;
+  // 处理宿主节点：
   if (isHost || (enableFundamentalAPI && tag === FundamentalComponent)) {
     const stateNode = isHost ? node.stateNode : node.stateNode.instance;
     if (before) {
@@ -1245,11 +1322,12 @@ function insertOrAppendPlacementNode(
     } else {
       appendChild(parent, stateNode);
     }
-  } else if (tag === HostPortal) {
-    // If the insertion itself is a portal, then we don't want to traverse
-    // down its children. Instead, we'll get insertions from each child in
-    // the portal directly.
-  } else {
+  }
+  // 处理 Portal
+  else if (tag === HostPortal) {
+  }
+  // 对于非宿主和非 Portal 类型的节点，函数会尝试递归地处理其第一个子节点 (child)。
+  else {
     const child = node.child;
     if (child !== null) {
       insertOrAppendPlacementNode(child, before, parent);
@@ -1262,6 +1340,11 @@ function insertOrAppendPlacementNode(
   }
 }
 
+/**
+ * 根据不同类型做逻辑处理：递归卸载宿主组件（如 DOM 元素）等其他类型组件处理逻辑及其子树的关键函数
+ * - 执行子树的卸载钩子，函数组件的useEffect的卸载钩子调度处理不直接执行
+ * - DOM的实际remove操作
+ */
 function unmountHostComponents(
   finishedRoot: FiberRoot,
   current: Fiber,
@@ -1276,10 +1359,12 @@ function unmountHostComponents(
   let currentParentIsValid = false;
 
   // Note: these two variables *must* always be updated together.
+  // 查找最近的父级宿主节点
   let currentParent;
   let currentParentIsContainer;
 
   while (true) {
+    // 1、设置上面currentParent两个变量值：查找最近的父级宿主节点
     if (!currentParentIsValid) {
       let parent = node.return;
       findParent: while (true) {
@@ -1313,10 +1398,13 @@ function unmountHostComponents(
       currentParentIsValid = true;
     }
 
+    // 2、处理宿主组件和文本节点
     if (node.tag === HostComponent || node.tag === HostText) {
+      // 2-1: 子树的卸载钩子
       commitNestedUnmounts(finishedRoot, node, renderPriorityLevel);
       // After all the children have unmounted, it is now safe to remove the
       // node from the tree.
+      // 2-2: DOM的实际remove操作
       if (currentParentIsContainer) {
         removeChildFromContainer(
           ((currentParent: any): Container),
@@ -1329,7 +1417,9 @@ function unmountHostComponents(
         );
       }
       // Don't visit children because we already visited them.
-    } else if (enableFundamentalAPI && node.tag === FundamentalComponent) {
+    }
+    // 处理基础组件
+    else if (enableFundamentalAPI && node.tag === FundamentalComponent) {
       const fundamentalNode = node.stateNode.instance;
       commitNestedUnmounts(finishedRoot, node, renderPriorityLevel);
       // After all the children have unmounted, it is now safe to remove the
@@ -1345,7 +1435,9 @@ function unmountHostComponents(
           (fundamentalNode: Instance),
         );
       }
-    } else if (
+    } 
+    // 水合相关组件
+    else if (
       enableSuspenseServerRenderer &&
       node.tag === DehydratedFragment
     ) {
@@ -1371,7 +1463,9 @@ function unmountHostComponents(
           (node.stateNode: SuspenseInstance),
         );
       }
-    } else if (node.tag === HostPortal) {
+    }
+    // HostPortal 类组件
+    else if (node.tag === HostPortal) {
       if (node.child !== null) {
         // When we go into a portal, it becomes the parent to remove from.
         // We will reassign it back when we pop the portal on the way up.
@@ -1382,7 +1476,9 @@ function unmountHostComponents(
         node = node.child;
         continue;
       }
-    } else {
+    }
+    // 函数组件，类组件等其他类型组件：调用 commitUnmount 进行卸载，并继续递归处理其子树
+    else {
       commitUnmount(finishedRoot, node, renderPriorityLevel);
       // Visit children because we may find more host components below.
       if (node.child !== null) {
@@ -1394,6 +1490,7 @@ function unmountHostComponents(
     if (node === current) {
       return;
     }
+    // 递归处理子树
     while (node.sibling === null) {
       if (node.return === null || node.return === current) {
         return;
@@ -1410,6 +1507,16 @@ function unmountHostComponents(
   }
 }
 
+/**
+ * 主要执行unmountHostComponents
+ * 
+ * 1. 递归调用Fiber节点及其子孙Fiber节点中fiber.tag为ClassComponent的componentWillUnmount生命周期钩子，和 页面移除Fiber节点对应DOM节点
+ * 2. 解绑ref
+ * 3. 调度useEffect的销毁函数
+ * @param {*} finishedRoot 
+ * @param {*} current 
+ * @param {*} renderPriorityLevel 
+ */
 function commitDeletion(
   finishedRoot: FiberRoot,
   current: Fiber,
@@ -1423,6 +1530,7 @@ function commitDeletion(
     // Detach refs and call componentWillUnmount() on the whole subtree.
     commitNestedUnmounts(finishedRoot, current, renderPriorityLevel);
   }
+  // 重置fiber上的相关属性
   const alternate = current.alternate;
   detachFiberMutation(current);
   if (alternate !== null) {
@@ -1430,6 +1538,16 @@ function commitDeletion(
   }
 }
 
+/**
+ * commitMutationEffects  --- 遍历到Update 标记时，执行-> commitWork 
+ * 
+ * 根据Fiber.tag分别处理：主要处理FunctionComponent和HostComponent类型逻辑，类组件类型等没有任何逻辑
+ *    - FunctionComponent：主要执行 commitHookEffectListUnmount
+ *    - HostComponent：主要执行commitUpdate。将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的值更新渲染在页面对应DOM上
+ * @param {*} current 
+ * @param {*} finishedWork 
+ * @returns 
+ */
 function commitWork(current: Fiber | null, finishedWork: Fiber): void {
   if (!supportsMutation) {
     switch (finishedWork.tag) {
@@ -1525,6 +1643,7 @@ function commitWork(current: Fiber | null, finishedWork: Fiber): void {
     case ClassComponent: {
       return;
     }
+    // 在updateDOMProperties 中将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的内容渲染在页面上
     case HostComponent: {
       const instance: Instance = finishedWork.stateNode;
       if (instance != null) {
