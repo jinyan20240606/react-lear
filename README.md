@@ -60,6 +60,10 @@
     - beginWork中只处理child属性不处理sibling属性，只生成sibling属性不处理sibling属性，
   - 当前一直深度优先child时，如果child为null，开始执行completeWork，这方法中会处理sibling属性：从内到外的方向
 6. workInProgressRoot：指向唯一的fiberRoot节点，初始值为null。赋值fiberRoot在renderRootSync的刷新栈帧prepareFreshStack方法中赋值
+7. react中fiber中大体分为两类属性，同时生命周期钩子也是对应分为这两类 --- 见状态更新刨析章节
+  - 状态属性: 用于fiber树构造过程，一般对应useState，getDerivedStateFromProps等状态类钩子中使用
+  - 副作用属性：用于commit阶段，一把对应useEffect，getSnapshotBeforeUpdate，componentDidMount等副作用类钩子中使用
+8. 环形链表的特征: 为了方便添加新元素和快速拿到队首元素(都是O(1)), 所以pending指针指向了链表中最后一个元素
 
 ### mode与优先级和通道lanes概念
 
@@ -189,7 +193,7 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   // // 1. props.children 可以直接传入当作pendingProps
   // // 2. element.props作为pendingProps【const pendingProps = element.props】
   this.pendingProps = pendingProps;
-  this.memoizedProps = null; // 计算好的最终props新值
+  this.memoizedProps = null; // 上次计算好的最终props新值---- pendingProps和memoizedProps比较可以得出属性是否变动.
 
   // updateQueue 属性在类组件和函数组件中的结构不一样，都是存着各自结构的副作用队列
   // 1. class组件：存生命周期钩子componentDidMount类的副作用队列。宿主组件存储 某个组件状态更新产生的 Updates链表 的地方，是以queue为类型保存的 ==== 类型定义：react/packages/react-reconciler/src/ReactUpdateQueue.old.js
@@ -198,7 +202,7 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   this.updateQueue: queue = null; // 状态更新创建Update链表，然后推入到这个updateQueue，等待再beginWork中处理，处理方法在react/packages/react-reconciler/src/ReactUpdateQueue.old.js:processUpdateQueue
 
   // 保存当前组件状态更新计算后准备更新的state
-  // fiber.memoizedState指向fiber节点的内存状态. 在function类型的组件中, fiber.memoizedState就指向Hook队列(Hook队列保存了function类型的组件状态).
+  // 类组件存储fiber的状态，函数组件存储hooks链表. 在function类型的组件中, fiber.memoizedState就指向Hook队列(Hook队列保存了function类型的组件状态).
   // 所以classComponent和Hook都不能脱离fiber而存在
   this.memoizedState: hook = null; // processUpdateQueue最新计算后的fiber.updateQueue.baseState同时也赋值给了fiber.memoizedState
 
@@ -208,6 +212,8 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
 
   /**
    * flags与effectList链表是成对存在的，firstEffect链接的是有副作用的fiber节点，该fiber节点上必须会含对应的副作用标记flags
+   * 
+   * 标志位, 表明该fiber节点有副作用(在 v17.0.2 中共定义了28 种副作用).
    */
   // flags 标记，在beginWork和completeWork都可能会设置。对fiber节点到commit阶段的DOM操作标记：增删改等
   this.flags = Flags; // 定义：react/packages/react-reconciler/src/ReactFiberFlags.js
@@ -221,7 +227,8 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   this.lastEffect = null;
 
   // 调度优先级相关
-  this.lanes = NoLanes; // 当前节点的一组更新通道：默认值是ob0000000 无优先级通道
+  // fiber.lanes：为 NoLanes（没有其他待处理的更新,表明接下来这个是第一次更新）
+  this.lanes = NoLanes; // 当前节点的一组更新通道：默认值是ob0000000 NoLanes 无优先级通道
   /**
    * 当一个更新请求被调度到某个 Fiber 节点的子节点时，新的车道会被合并到父节点的 childLanes 属性中
    * 
@@ -292,6 +299,7 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   - HostComponent组件：数组结构;UpdateQueue格式为 名叫updatePayload为数组形式，他的偶数索引的值为变化的prop key，奇数索引的值为变化的prop value
   - ClassComponent和HostRoot组件：链表结构
       ```js
+      // 这是类组件的Update数据结构：定义在react/packages/react-reconciler/src/ReactUpdateQueue.old.js
       const update: Update<*> = {
         eventTime,
         lane, // 此次更新事务的优先级
@@ -314,13 +322,58 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
         lastBaseUpdate: null,
         shared: {
           pending: update,// 保存此次更新的update的链表
-          // 
         },
         effects: null,
       };
       // beginWork时：遍历baseUpdate链表在baseState基础上计算最终要更新的state, 并赋值给fiber.memoizedState
       ```
-  - FunctionComponent组件：
+  - FunctionComponent组件：就是下面章节的Hooks数据结构，与类组件的有区别
+
+#### 状态更新刨析
+
+> 参考https://7km.top/main/state-effects
+
+```js
+export type Fiber = {|
+  // 1. fiber节点自身状态相关
+  pendingProps: any,
+  memoizedProps: any,
+  updateQueue: mixed,
+  memoizedState: any,
+
+  // 2. fiber节点副作用(Effect)相关
+  flags: Flags,
+  subtreeFlags: Flags, // v17.0.2未启用
+  deletions: Array<Fiber> | null, // v17.0.2未启用
+  nextEffect: Fiber | null,
+  firstEffect: Fiber | null,
+  lastEffect: Fiber | null,
+|};
+```
+
+##### 与状态相关有 4 个属性: --- 静态能力
+
+- fiber.pendingProps: 输入属性, 从ReactElement对象传入的 props. 它和fiber.memoizedProps比较可以得出属性是否变动.
+- fiber.memoizedProps: 上一次生成子节点时用到的属性, 生成子节点之后保持在内存中. 向下生成子节点之前叫做pendingProps, 生成子节点之后会把pendingProps赋值 -   memoizedProps用于下一次比较.pendingProps和memoizedProps比较可以得出属性是否变动.
+- fiber.updateQueue: 存储update更新对象的队列, 每一次发起更新, 都需要在该队列上创建一个update对象.
+- fiber.memoizedState: 上一次生成子节点之后保持在内存中的局部状态.
+
+它们的作用只局限于fiber树构造阶段, 直接影响子节点的生成
+
+##### 副作用 --- 动态能力
+与副作用相关有 4 个属性:
+
+- fiber.flags: 标志位, 表明该fiber节点有副作用(在 v17.0.2 中共定义了28 种副作用).
+- fiber.nextEffect: 单向链表, 指向下一个副作用 fiber节点.
+- fiber.firstEffect: 单向链表, 指向第一个副作用 fiber 节点.
+- fiber.lastEffect: 单向链表, 指向最后一个副作用 fiber 节点.
+
+通过前文fiber树构造我们知道, 单个fiber节点的副作用队列最后都会上移到根节点上. 所以在commitRoot阶段中, react提供了 3 种处理副作用的方式(详见fiber 树渲染其commit那3个子阶段都是来处理这些副作用).
+
+另外, 副作用的设计可以理解为对状态功能不足的补充.
+
+- 状态是一个静态的功能, 它只能为子节点提供数据源.
+- 而副作用是一个动态功能, 由于它的调用时机是在fiber树渲染阶段, 故它拥有更多的能力, 能轻松获取突变前快照, 突变后的DOM节点等. 甚至通过调用api发起新的一轮fiber树构造, 进而改变更多的状态, 引发更多的副作用
 
 ### 深入理解优先级
 - react为产生的不同的状态更新类型赋予不同的优先级：
@@ -443,7 +496,191 @@ const rootFiberNode = {
 5. render阶段
 6. commit阶段
 
-### Hooks原理
+### Hooks源码刨析
+
+#### hook原理概览
+
+> https://7km.top/main/hook-summary
+
+##### Hook 与 Fiber
+
+```js
+export type Fiber = {|
+  // 1. fiber节点自身状态相关
+  pendingProps: any,
+  memoizedProps: any,
+  updateQueue: mixed,
+  memoizedState: any,
+
+  // 2. fiber节点副作用(Effect)相关
+  flags: Flags,
+  nextEffect: Fiber | null,
+  firstEffect: Fiber | null,
+  lastEffect: Fiber | null,
+|};
+```
+1. 使用Hook最终也是为了控制fiber节点的状态和副作用. 从fiber视角, 状态和副作用相关的属性如下
+    - 使用Hook的任意一个api, 最后都是为了控制上述这几个fiber属性.
+
+##### hook分类
+
+当前版本共14个hook
+```js
+export type HookType =
+  | 'useState'
+  | 'useReducer'
+  | 'useContext'
+  | 'useRef'
+  | 'useEffect'
+  | 'useLayoutEffect'
+  | 'useCallback'
+  | 'useMemo'
+  | 'useImperativeHandle'
+  | 'useDebugValue'
+  | 'useDeferredValue'
+  | 'useTransition'
+  | 'useMutableSource'
+  | 'useOpaqueIdentifier';
+```
+
+1. 官网上已经将其分为了 2 个类别,
+   - 状态Hook(State Hook): useState,useReducer,useContext, useRef, useCallback, useMemo
+      - 状态Hook实现了状态持久化(等同于class组件维护fiber.memoizedState)
+   - 副作用Hook(Effect Hook).
+      - 副作用Hook则会修改fiber.flags. (通过前文fiber树构造系列的解读, 我们知道在performUnitOfWork->completeWork阶段, 所有存在副作用的fiber节点, 都会被添加到父节点的副作用队列后, 最后在commitRoot阶段处理这些副作用节点)
+   - 组合 Hook: 虽然官网并无组合Hook的说法, 但事实上大多数Hook(包括自定义Hook)都是由上述 2 种 Hook组合而成, 同时拥有这 2 种 Hook 的特性.在react内部有useDeferredValue, useTransition, useMutableSource, useOpaqueIdentifier等.平时开发中, 自定义Hook大部分都是组合 Hook
+
+这里我们可以结合前文状态与副作用, 从fiber的视角去理解状态Hook与副作用Hook的区别.
+
+##### 调用function前
+
+在调用function之前, react内部还需要提前做一些准备工作.
+
+1. 这块主要在fiber构造过程中，所以这块主要入口函数为beginWork中：react/packages/react-reconciler/src/ReactFiberBeginWork.old.js@beginWork
+2. 在beginWork构造新子级fiber节点时updateFunctionComponent函数中生成nextChildren逻辑中主要调用了renderWithHooks(位于ReactFiberHooks) , 至此Fiber与Hook产生了关联
+
+##### 全局变量
+
+了解renderWithHooks先要了解react-reconciler/src/ReactFiberHooks.old.js定义的一些全局变量
+
+```js
+// 渲染优先级
+let renderLanes: Lanes = NoLanes;
+
+// 当前正在构造的fiber, 等同于 workInProgress, 为了和当前hook区分, 所以将其改名
+let currentlyRenderingFiber: Fiber = (null: any);
+
+// Hooks被存储在fiber.memoizedState 链表上
+let currentHook: Hook | null = null; // currentHook = fiber(current).memoizedState
+
+let workInProgressHook: Hook | null = null; // workInProgressHook = fiber(workInProgress).memoizedState
+
+// 在function的执行过程中, 是否再次发起了更新. 只有function被完全执行之后才会重置.
+// 当render异常时, 通过该变量可以决定是否清除render过程中的更新.
+let didScheduleRenderPhaseUpdate: boolean = false;
+
+// 在本次function的执行过程中, 是否再次发起了更新. 每一次调用function都会被重置
+let didScheduleRenderPhaseUpdateDuringThisPass: boolean = false;
+
+// 在本次function的执行过程中, 重新发起更新的最大次数
+const RE_RENDER_LIMIT = 25;
+```
+每个变量的解释, 可以对照源码中的英文注释, 其中最重要的有:
+
+currentlyRenderingFiber: 当前正在构造的 fiber, 等同于 workInProgress
+
+currentHook 与 workInProgressHook: 分别指向current.memoizedState和workInProgress.memoizedState
+
+注: 有关current和workInProgress的区别, 请回顾双缓冲技术(double buffering)
+
+##### renderWithHooks解读
+
+> react/packages/react-reconciler/src/ReactFiberHooks.old.js@renderWithHooks
+
+1. HooksDispatcher定义处：react/packages/react-reconciler/src/ReactFiberHooks.old.js@HooksDispatcherOnUpdate
+
+##### 调用function
+
+定义：react/packages/react-reconciler/src/ReactFiberHooks.old.js@mountState 和 updateState
+
+- hooks构造
+  - 在function中, 如果使用了Hook api(如: useEffect, useState), 就会创建一个与之对应的Hook对象, 接下来重点分析这个创建过程.
+  - 结论：无论useState, useEffect, 内部都通过mountWorkInProgressHook创建一个 hook.
+- 链表存储
+  - 而mountWorkInProgressHook非常简单: 逻辑是创建Hook并挂载到`当前fiber.memoizedState`上, 多个Hook以链表结构保存.
+- update阶段：顺序克隆
+  - 无论useState, useEffect, 内部调用updateWorkInProgressHook获取一个 hook.
+  - updateWorkInProgressHook函数逻辑简单: 目的是为了让currentHook和workInProgressHook两个指针同时向后移动.
+      - 由于renderWithHooks函数设置了workInProgress.memoizedState=null, 所以workInProgressHook初始值必然为null, 只能从currentHook克隆.
+      - 而从currentHook克隆而来的newHook.next=null, 进而导致workInProgressHook链表需要完全重建
+      - 结论可以看到:
+          - 以双缓冲技术为基础, 将current.memoizedState按照顺序克隆到了workInProgress.memoizedState中.
+          - Hook经过了一次克隆, 内部的queue属性(hook.memoizedState等)都没有变动, 所以其状态并不会丢失
+
+##### 总结
+
+通过renderWithHooks函数, 把Hook链表挂载到了fiber.memoizedState之上. 利用fiber树内部的双缓冲技术, 实现了Hook从current到workInProgress转移, 进而实现了Hook状态的持久化.
+
+大体流程：
+
+1. function类型的fiber节点, 它的处理函数是updateFunctionComponent, 其中再通过renderWithHooks调用function.
+    - 在function中, 通过Hook Api(如: useState, useEffect)创建Hook对象.
+3. 状态Hook实现了状态持久化(等同于class组件维护fiber.memoizedState).
+    - 副作用Hook则实现了维护fiber.flags,并提供副作用回调(类似于class组件的生命周期回调)
+4. 多个Hook对象构成一个链表结构, 并挂载到fiber.memoizedState之上.
+5. fiber树更新阶段, 把current.memoizedState链表上的所有Hook按照顺序克隆到workInProgress.memoizedState上, 实现数据的持久化.
+
+#### 状态Hook深入刨析
+
+> 前面基础之上, 本节将深入分析状态Hook的特性和实现原理.
+
+> 本节链接：https://7km.top/main/hook-state
+
+##### 创建hook
+
+mountState源码：定义：react/packages/react-reconciler/src/ReactFiberHooks.old.js@mountState 和 mountReducer
+
+对比 mountState 和 mountReducer逻辑简单: 主要负责创建hook, 初始化hook的属性, 最后返回[当前状态, dispatch函数].
+
+dispatch实际上会调用reducer函数lastRenderedReducer.
+
+唯一的不同点是hook.queue.lastRenderedReducer的赋值
+- mountState使用的是内置的basicStateReducer
+- mountReducer使用的是传入的reducer
+
+可见mountState是mountReducer的一种特殊情况, 即useState也是useReducer的一种特殊情况, 也是最简单的情况
+
+##### 状态初始化
+
+在useState(initialState)函数内部, 设置hook.memoizedState = hook.baseState = initialState;, 初始状态被同时保存到了hook.baseState,hook.memoizedState中.
+
+hook.memoizedState: 当前状态
+hook.baseState: 基础状态, 作为合并hook.baseQueue的初始值(下文介绍).
+最后返回[hook.memoizedState, dispatch], 所以在function中使用的是hook.memoizedState.
+
+##### 状态更新
+
+详见图解：https://7km.top/main/hook-state
+
+1. 状态更新触发条件：首先点击是button, 通过dispatch函数进行更新, dispatch实际就是dispatchAction
+  - dispatch方法定义在queue.dispatch保存：react/packages/react-reconciler/src/ReactFiberHooks.old.js@mountState 和 mountReducer, 中创建dispatchAction赋值给queue.dispatch
+  - dispatch产生了多个更新对象, 并放入hook.queue.pending中，此时页面中currentHook也会同步更新这个新的queue环行链表
+      - 因为@mountState中queue这个常量同时赋值给了wip.memoizedState.queue 和 传入了dispatchAction这个闭包函数中，使得页面commit渲染后，dispatchAction闭包依旧能够读写这个queue常量对象---> 所以会同步更新
+2. 详见 updateReducer 函数注释：react/packages/react-reconciler/src/ReactFiberHooks.old.js
+  - 主要任务：找到对应的hook，根据update计算该hook的新state并返回
+      - 调用updateWorkInProgressHook从currentHooks链表克隆当前wipHook对象
+      - 链表拼接: 将queue.pending同步到currentHook的baseQueue，两个fiber的queue.pengding同时变成null
+      - 状态计算：
+          - 循环遍历刚才生成的currentHookBaseQueue存储的update链表
+          - 计算更新wip hook的memoizedState，baseQueue，baseState值（计算后若无遗留队列此时两个fiber的baseQueue都为null）
+      - 函数返回值：return [wipHook.memoizedState, wipHook.queue.dispatch];
+  - 性能优化：主要是处理dispatchAction中的4.1逻辑判断生成的eagerState属性
+      - dispatchAction函数中, 在调用scheduleUpdateOnFiber之前, 针对update对象做了性能优化，增加了eagerState
+      - 在updateReducer时，判断如果有这个属性就直接使用，不需要再次执行计算了
+      - 为什么该eagerState属性只在第一个update时做才会起到优化作用呢？
+          - 答：第一个update就是当前hook第一次触发dispatch时
+          - 当连续dispatch时React 不会再尝试立即计算 eagerState，而是将更新添加到现有的队列中，并等待所有更新一起被处理，因为多个更新可能会相互依赖，提前计算某一个更新的状态值可能不会反映最终的真实状态。例如，如果在同一个事件循环中有两次连续的 setCount(count + 1) 操作，那么单独处理每个更新会导致不准确的状态变化（比如从 1 变成 2 再变成 3），而实际上应该是一次性从 1 变成 3
+  - 异步更新：主要是baseQueue，baseState的应用
 
 #### 极简useState-hook的实现
 
@@ -476,9 +713,9 @@ function useState(initialState) {
 #### hooks的数据结构
 
 1. 对于函数组件：有两种不同的updateQueue队列：Hook.queue 和 FunctionComponentUpdateQueue ，具体类型定义看下面 【A】定义处
-    - Hook.queue：主要存储useState，useReducer之类的更新队列
+    - Hook.queue：主要存储useState，useReducer等状态类钩子的更新队列
       - Hook对象存在`fiber.memoizedState: Hook | null`属性上
-    - FunctionComponentUpdateQueue：主要存储useEffect，useLayoutEffect之类的副作用类的更新队列
+    - FunctionComponentUpdateQueue：主要存储useEffect，useLayoutEffect等副作用类的更新队列
       - 这个存在`fiber.updateQueue: FunctionComponentUpdateQueue | null, // 副作用更新队列`
 2. fiber的结构上有一个 memoizedState 属性，用来存放hooks链表（存放不同hook产生的hook对象）
 每个链节点即hook对象上有一个memoizedState属性，用来存放hook的待更新的计算state
@@ -494,30 +731,34 @@ function useState(initialState) {
 
 ```js
 // 【A】hook相关数据结构定义在：react/packages/react-reconciler/src/ReactFiberHooks.old.js
-const hook:Hook = {
-  // 保存update的queue，即上文介绍的queue
-  queue: hookqueue,
-  // 保存hook对应的state或effects链表
-  memoizedState: initialState,
-  baseState: null,
-  baseQueue: null,
-  // 与下一个Hook连接形成单向无环链表
-  next: null
-}
-
-const hookqueue: UpdateQueue<State> = {
-  baseState: fiber.memoizedState,
-  firstBaseUpdate: null,
-  lastBaseUpdate: null,
-  shared: {
-    pending: null// pending连接的就是环状单向update组成的链表。为什么环状方便遍历
-  },
-  effects: null, // 数组。保存update.callback !== null的Update
-};
+type UpdateQueue<S, A> = {|
+  pending: Update<S, A> | null,
+  dispatch: ((A) => mixed) | null,
+  lastRenderedReducer: ((S, A) => S) | null,
+  lastRenderedState: S | null, // 这个值与Hook.memoizedState相同
+|};
+type Update<S, A> = {|
+  lane: Lane,
+  action: A,
+  eagerReducer: ((S, A) => S) | null,
+  eagerState: S | null,
+  next: Update<S, A>,
+  priority?: ReactPriorityLevel,
+|};
+export type Hook = {|
+  memoizedState: any, // 本次渲染的计算后最终状态
+  /**
+   * 在有遗留更新队列时和没遗留更新时最后都会设成newState值，循环完毕后两种情况设值
+   *    1. 有遗留更新队列时，仅会在第一次遗留时的newState赋值给他，后续遗留时都不会设置（方便下次计算遗留时从此处的状态作为基准开始计算）
+   *    2. 都没有遗留更新队列时：仅即newBaseQueueLast=null时，将最新的newState也会赋值给它
+   * newBaseState最后作为wipHook的baseState值
+   */
+  baseState: any, // 基状态：遗留时的当时计算的newState值，方便下次计算遗留时从此处的状态作为基准开始计算
+  baseQueue: Update<any, any> | null, // 基队列：遗留更新队列（从第一次遗留时后的所有Update队列）
+  queue: UpdateQueue<any, any> | null, // 更新队列：存储update对象的环形链表, 包括所有优先级的update对象，拼接到current.baseQueue后就重置为null了
+  next: Hook | null, // next指针：next指针, 指向链表中的下一个hook
+|};
 ```
-
-#### useState的实际流程
-
 
 ### Schedule包的调度器刨析
 

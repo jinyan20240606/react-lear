@@ -716,6 +716,15 @@ function markRef(current: Fiber | null, workInProgress: Fiber) {
   }
 }
 
+/**
+ * 与updateHostRoot核心思路类似:以下3个步骤
+ * 1. 计算一些状态值
+ * 2. 调用 renderWithHooks 获取 nextChildren：即reactELement子树
+      - 执行function方法, 获取nextChildren（ReactElement）用于后面diff
+      - 根据实际情况, 设置fiber.flags
+ * 3. 调用 **reconcileChildren** ：根据nextChildren即ReactElement对象,计算最终生成Fiber子节点(只生成次级子节点) 根据实际情况, 设置fiber.flags
+@return — 最终返回生成的子fiber节点：workInProgress.child;
+ */
 function updateFunctionComponent(
   current,
   workInProgress,
@@ -3413,6 +3422,7 @@ function beginWork(
         renderLanes,
       );
     }
+    // fiber构造时，内部updateQueue使用了fiber上的Hook对象来依托
     case FunctionComponent: {
       const Component = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;
@@ -3428,6 +3438,7 @@ function beginWork(
         renderLanes,
       );
     }
+    // fiber 构造时，内部updateQueue使用了fiber上的class实例对象来依托
     case ClassComponent: {
       const Component = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;

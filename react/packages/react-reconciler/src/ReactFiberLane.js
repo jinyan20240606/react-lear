@@ -647,10 +647,10 @@ export function includesSomeLane(a: Lanes | Lane, b: Lanes | Lane) {
 }
 
 /**
- * 判断某个更新的优先级（subset）是否是 优先级组(set)的子集
+ * 用来判断二参的优先级是否大于等于1参优先级，大于等于则true，否则返回false
  * @param {*} set 
  * @param {*} subset 
- * @returns 返回false不是子集，true是子集
+ * @returns
  */
 export function isSubsetOfLanes(set: Lanes, subset: Lanes | Lane) {
   return (set & subset) === subset;
