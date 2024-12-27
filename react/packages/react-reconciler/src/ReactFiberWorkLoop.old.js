@@ -2502,8 +2502,14 @@ function commitRootImpl(root, renderPriorityLevel) {
 /**
  * 整体可以分为三部分：
  * 1. 处理DOM节点渲染/删除后的 autoFocus、blur 逻辑。
- * 2. 处理flags:`Snapshot`标记：调用getSnapshotBeforeUpdate生命周期钩子。
- * 3. 处理flags:`Passive`标记：以NormalSchedulerPriority调度useEffect
+ * 2. commitBeforeMutationEffectOnFiber方法处理flags:`Snapshot`标记：调用getSnapshotBeforeUpdate生命周期钩子。
+ * 3. 处理flags:`Passive`标记：以NormalSchedulerPriority调度flushPassiveEffects（对应useEffect）
+ *    - 该useEffect标记，会在beginWork-fiber树构造过程中的renderWithHooks中的useEffect函数执行逻辑中会向fiber节点添加fiber-Passive-flags
+ *        - 见Hooks章节的mountEffectImpl源码
+ *    - scheduleCallback(NormalSchedulerPriority, () => {
+          flushPassiveEffects();
+          return null;
+        });
  */
 function commitBeforeMutationEffects() {
   while (nextEffect !== null) {
@@ -2624,6 +2630,7 @@ function commitMutationEffects(
         break;
       }
       // 更新：该Fiber节点需要更新。调用的方法为commitWork
+      // // useEffect,useLayoutEffect都会设置Update标记
       case Update: {
         const current = nextEffect.alternate;
         commitWork(current, nextEffect);
@@ -2664,6 +2671,7 @@ function commitLayoutEffects(root: FiberRoot, committedLanes: Lanes) {
     const flags = nextEffect.flags;
 
     // 1-调用生命周期钩子和hook
+    // useEffect,useLayoutEffect都会设置Update标记
     if (flags & (Update | Callback)) {
       const current = nextEffect.alternate;
       commitLayoutEffectOnFiber(root, current, nextEffect, committedLanes);
@@ -2849,7 +2857,7 @@ function flushPassiveEffectsImpl() {
   // Layout effects have the same constraint.
 
   // First pass: Destroy stale passive effects.
-  // 第一遍：销毁旧的被动副作用
+  // 第一遍：销毁旧的被动副作用：对应执行 effect.destroy()
   // 遍历 pendingPassiveHookEffectsUnmount 列表，逐个调用每个副作用的 destroy 方法。
   const unmountEffects = pendingPassiveHookEffectsUnmount;
   pendingPassiveHookEffectsUnmount = [];
@@ -2913,7 +2921,7 @@ function flushPassiveEffectsImpl() {
   // Second pass: Create new passive effects.
   const mountEffects = pendingPassiveHookEffectsMount;
   pendingPassiveHookEffectsMount = [];
-  // 第二遍：创建新的被动副作用
+  // 第二遍：创建新的被动副作用：对应执行新 effect.create(), 重新赋值到 effect.destroy
   // 遍历 pendingPassiveHookEffectsMount 列表，逐个调用每个副作用的 create 方法
   for (let i = 0; i < mountEffects.length; i += 2) {
     const effect = ((mountEffects[i]: any): HookEffect);

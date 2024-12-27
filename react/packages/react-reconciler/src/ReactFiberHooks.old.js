@@ -140,6 +140,12 @@ export type Hook = {|
 |};
 
 export type Effect = {|
+  /**
+   * export const NoFlags = 0b000;
+    export const HasEffect =  0b001; // 有副作用, 可以被触发
+    export const Layout = 0b010; // Layout, dom突变后同步触发
+    export const Passive = 0b100; // Passive, dom突变前异步触发
+  */
   tag: HookFlags,
   create: () => (() => void) | void,
   destroy: (() => void) | void,
@@ -1252,7 +1258,14 @@ function rerenderState<S>(
   return rerenderReducer(basicStateReducer, (initialState: any));
 }
 
+/**
+ * 创建effect对象，初始化wipFiber.updateQueue:FunctionComponentUpdateQueue属性将effect对象拼接到末尾，并返回
+ * 
+ * wipFiber.updateQueue:FunctionComponentUpdateQueue：存着所有hook的effect对象链表
+ * @returns 返回新建的effect对象
+ */
 function pushEffect(tag, create, destroy, deps) {
+  // 1. 创建effect对象
   const effect: Effect = {
     tag,
     create,
@@ -1261,6 +1274,7 @@ function pushEffect(tag, create, destroy, deps) {
     // Circular
     next: (null: any),
   };
+  // 2. 把effect对象添加到wipFiber.updateQueue 环形链表末尾（初次就初始化下这个更新队列，单位为effect对象）
   let componentUpdateQueue: null | FunctionComponentUpdateQueue = (currentlyRenderingFiber.updateQueue: any);
   if (componentUpdateQueue === null) {
     componentUpdateQueue = createFunctionComponentUpdateQueue();
@@ -1277,6 +1291,7 @@ function pushEffect(tag, create, destroy, deps) {
       componentUpdateQueue.lastEffect = effect;
     }
   }
+  // 返回
   return effect;
 }
 
@@ -1295,35 +1310,66 @@ function updateRef<T>(initialValue: T): {|current: T|} {
   return hook.memoizedState;
 }
 
+/**
+ * mount阶段的useEffect和useLayoutEffect的实际定义
+ * 
+ * 一句话：初始化hooks链表挂到wipFiber上
+ * 
+ * 1. 创建hook存储到wipFiber上
+ * 2. 设置workInProgress的副作用标记为fiberFlags
+ * 3. 创建Effect（消费hookFlags参数）, 挂载到hook.memoizedState上
+ * 注意：状态Hook中hook.memoizedState = state
+ * @param {*} fiberFlags useEffect的传的fiber标记为：UpdateEffect | PassiveEffect, useLayoutEffect仅传UpdateEffect标记
+ * @param {*} hookFlags useEffect的传的是HookLayout
+ * @param {*} create
+ * @param {*} deps
+ */
 function mountEffectImpl(fiberFlags, hookFlags, create, deps): void {
+  // 1. 创建hook
   const hook = mountWorkInProgressHook();
   const nextDeps = deps === undefined ? null : deps;
-  currentlyRenderingFiber.flags |= fiberFlags;
+  // 2. 设置workInProgress的副作用标记
+  currentlyRenderingFiber.flags |= fiberFlags; // fiberFlags 被标记到workInProgress
+  // 3. 创建Effect, 挂载到hook.memoizedState上
   hook.memoizedState = pushEffect(
-    HookHasEffect | hookFlags,
+    HookHasEffect | hookFlags, // hookFlags用于创建effect
     create,
     undefined,
     nextDeps,
   );
 }
 
+/**
+ * update阶段的useEffect实际定义
+ * 
+ * 1. 获取当前hook
+ * 2. 分析依赖是否改变，创建Effect对象存入全局数组
+ * @param {*} fiberFlags
+ * @param {*} hookFlags
+ * @param {*} create
+ * @param {*} deps
+ */
 function updateEffectImpl(fiberFlags, hookFlags, create, deps): void {
+  // 1. 获取当前hook
   const hook = updateWorkInProgressHook();
   const nextDeps = deps === undefined ? null : deps;
   let destroy = undefined;
-
+  // 2. 分析依赖
   if (currentHook !== null) {
     const prevEffect = currentHook.memoizedState;
+    // 继续使用先前effect.destroy
     destroy = prevEffect.destroy;
     if (nextDeps !== null) {
       const prevDeps = prevEffect.deps;
+      // 比较依赖是否变化
       if (areHookInputsEqual(nextDeps, prevDeps)) {
+        // 2.1 如果依赖不变, 新建effect(tag不含HookHasEffect，mount时会传)
         pushEffect(hookFlags, create, destroy, nextDeps);
         return;
       }
     }
   }
-
+  // 2.2 如果依赖改变, 更改fiber.flag, 新建effect
   currentlyRenderingFiber.flags |= fiberFlags;
 
   hook.memoizedState = pushEffect(
@@ -1334,6 +1380,16 @@ function updateEffectImpl(fiberFlags, hookFlags, create, deps): void {
   );
 }
 
+/**
+ * CASE:
+ * ```js
+ * useEffect(() => {
+    fetchData();
+    // 返回清理函数（可选）
+    return () => {};
+  }, []);
+ * ```
+ */
 function mountEffect(
   create: () => (() => void) | void,
   deps: Array<mixed> | void | null,
@@ -1352,6 +1408,16 @@ function mountEffect(
   );
 }
 
+/**
+ * CASE:
+ * ```js
+ * useEffect(() => {
+    fetchData();
+    // 返回清理函数（可选）
+    return () => {};
+  }, []);
+ * ```
+ */
 function updateEffect(
   create: () => (() => void) | void,
   deps: Array<mixed> | void | null,

@@ -64,6 +64,9 @@
   - 状态属性: 用于fiber树构造过程，一般对应useState，getDerivedStateFromProps等状态类钩子中使用
   - 副作用属性：用于commit阶段，一把对应useEffect，getSnapshotBeforeUpdate，componentDidMount等副作用类钩子中使用
 8. 环形链表的特征: 为了方便添加新元素和快速拿到队首元素(都是O(1)), 所以pending指针指向了链表中最后一个元素
+9. Hooks中
+  - schedulePassiveEffects是填充Passsive全局数组，flushPassiveEffects是触发全局数组里存的副作用调度执行
+  - 执行effect.destroy()的地方有两个:1.组件销毁时commitDeletion中commitUnmount中, 执行effect.destroy()；2. flushPassiveEffects中
 
 ### mode与优先级和通道lanes概念
 
@@ -681,6 +684,127 @@ hook.baseState: 基础状态, 作为合并hook.baseQueue的初始值(下文介�
           - 答：第一个update就是当前hook第一次触发dispatch时
           - 当连续dispatch时React 不会再尝试立即计算 eagerState，而是将更新添加到现有的队列中，并等待所有更新一起被处理，因为多个更新可能会相互依赖，提前计算某一个更新的状态值可能不会反映最终的真实状态。例如，如果在同一个事件循环中有两次连续的 setCount(count + 1) 操作，那么单独处理每个更新会导致不准确的状态变化（比如从 1 变成 2 再变成 3），而实际上应该是一次性从 1 变成 3
   - 异步更新：主要是baseQueue，baseState的应用
+
+#### 副作用Hook刨析
+
+> 参考链接：https://7km.top/main/hook-effect
+
+入口定义处：react/packages/react-reconciler/src/ReactFiberHooks.old.js @HooksDispatcherOnUpdate|@HooksDispatcherOnMount
+
+##### 1. 创建Hook
+###### mount阶段 
+
+> useEffect，useLayoutEffect : 主要是创建hook链表挂载到wipFiber节点上
+
+1. mount阶段：可见mountEffect和mountLayoutEffect内部都直接调用mountEffectImpl, 只是参数不同.
+2. mountEffectImpl逻辑:
+    - 创建hook
+    - 设置workInProgress的副作用标记: flags |= fiberFlags
+    - 创建Effect链表(在pushEffect中), 挂载到hook.memoizedState上, 即 hook.memoizedState = effect
+        - 注意: 状态Hook中hook.memoizedState = state
+3. 现在整个fiber树的现状：当前fiber节点上如App fiber，同时挂2个属性
+    - memoizedState：存着hooks链表
+    - updateQueue：存着所有hook的effect对象链表   ---- pushEffect逻辑中
+  workInProgress.flags被打上了标记, 最后会在fiber树渲染阶段的commitRoot函数中处理
+4. 所以useEffect与useLayoutEffect的区别如下:
+    1. fiber.flags不同
+      - 使用useEffect时: fiber.flags = UpdateEffect | PassiveEffect.
+      - 使用useLayoutEffect时: fiber.flags = UpdateEffect.
+    2. effect.tag不同
+      - 使用useEffect时: effect.tag = HookHasEffect | HookPassive.
+      - 使用useLayoutEffect时: effect.tag = HookHasEffect | HookLayout
+
+##### 2. 处理Effect回调
+完成fiber树构造后, 逻辑会进入渲染阶段. 通过fiber 树渲染中的介绍, 在commitRootImpl函数中, 整个渲染过程被 3 个函数分布实现:
+
+commitBeforeMutationEffects
+
+commitMutationEffects
+
+commitLayoutEffects
+
+这 3 个函数会处理fiber.flags, 也会根据情况处理上面创建的fiber.updateQueue.lastEffect
+
+> 定义处：`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:2090
+
+###### commitBeforeMutationEffects
+
+第一阶段: dom 变更之前, 判断：处理副作用队列中带有Passive标记的fiber节点，发起调度更新副作用
+
+整体可以分为三部分：
+1. 处理DOM节点渲染/删除后的 autoFocus、blur 逻辑。
+2. commitBeforeMutationEffectOnFiber方法处理flags:`Snapshot`标记：调用getSnapshotBeforeUpdate生命周期钩子。
+3. 处理flags:`Passive`标记：以NormalSchedulerPriority调度flushPassiveEffects函数(本质对应useEffect)
+    - 该useEffect标记，会在beginWork-fiber树构造过程中的renderWithHooks中的useEffect函数执行逻辑中会向fiber节点添加fiber-Passive-flags
+       - 见Hooks章节的mountEffectImpl源码
+    - scheduleCallback(NormalSchedulerPriority, () => {
+          flushPassiveEffects();
+          return null;
+        });
+
+###### commitMutationEffects
+
+第二阶段: dom 变更, 界面得到更新.
+
+调用关系: commitMutationEffects->commitWork->commitHookEffectListUnmount.
+
+1. 主要在commitMutationEffects-commitWork中的处理FunctionComponent组件类型逻辑中用到消费前面的effect.tag = HookHasEffect | HookLayout标记即针对性useLayoutEffect钩子执行销毁函数的逻辑 -- 前面创建hook章节4.2部分
+    - FunctionComponent：主要执行 commitHookEffectListUnmount消费HookLayout | HookHasEffect 这俩Effect对象上的标记
+    - 而HookLayout | HookHasEffect是通过useLayoutEffect创建的effect. 所以commitHookEffectListUnmount函数只能处理由useLayoutEffect()创建的effect.
+    - 同步调用effect.destroy()
+
+###### commitLayoutEffects
+
+第三阶段: dom 变更后
+
+调用关系: commitLayoutEffects->commitLayoutEffectOnFiber(commitLifeCycles)->commitHookEffectListMount
+
+定义：react/packages/react-reconciler/src/ReactFiberCommitWork.old.js@schedulePassiveEffects
+
+1. 注意在调用commitHookEffectListMount(HookLayout | HookHasEffect, finishedWork)时, 参数是HookLayout | HookHasEffect,所以只处理由useLayoutEffect()创建的effect.
+调用effect.create()之后, 将返回值赋值到effect.destroy.
+2. 为flushPassiveEffects做准备
+    - commitLifeCycles中的schedulePassiveEffects(finishedWork), 其形参finishedWork实际上指代当前正在被遍历的有副作用的fiber
+    - schedulePassiveEffects比较简单, 就是把带有Passive标记的effect筛选出来(由useEffect创建), 添加到一个全局数组(pendingPassiveHookEffectsUnmount和pendingPassiveHookEffectsMount，后续阶段会全局数组被调度执行
+    - schedulePassiveEffects是填充Passsive全局数组，flushPassiveEffects是触发全局数组里存的副作用调度执行
+
+commitMutationEffects 和 commitLayoutEffects 2 个函数, 带有**Layout标记**的effect(由useLayoutEffect创建), 已经得到了完整的回调处理(destroy和create已经被调用)
+
+
+##### flushPassiveEffects
+
+> 定义：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@flushPassiveEffects
+
+上文commitBeforeMutationEffects阶段, 异步调用了flushPassiveEffects，调度的期间涵盖commitLayout阶段所以已经带有Passive标记的effect已经被添加到pendingPassiveHookEffectsUnmount和pendingPassiveHookEffectsMount全局数组中
+
+1. 接下来flushPassiveEffects就可以脱离fiber节点, 直接访问effects
+2. 遍历pendingPassiveHookEffectsUnmount中的所有effect, 调用effect.destroy().---同时清空pendingPassiveHookEffectsUnmount
+3. 遍历pendingPassiveHookEffectsMount中的所有effect, 调用effect.create(), 并更新effect.destroy.----同时清空pendingPassiveHookEffectsMount
+
+所以, 带有**Passive标记**的effect, 在flushPassiveEffects函数中得到了完整的回调处理
+
+##### 3. update阶段：更新Hook
+
+> 入口定义处：react/packages/react-reconciler/src/ReactFiberHooks.old.js @HooksDispatcherOnUpdate
+
+假设在初次调用之后, 发起更新, 会再次执行function, 这时function中使用的useEffect, useLayoutEffect等api也会再次执行.
+
+在更新过程中useEffect对应源码updateEffect, useLayoutEffect对应源码updateLayoutEffect. 它们内部都会调用updateEffectImpl, 与初次创建时一样, 只是参数不同
+
+- 主要关注 updateEffectImpl 函数逻辑
+    - react/packages/react-reconciler/src/ReactFiberHooks.old.js@updateEffectImpl
+    - 更新 Effect
+      - 获取hook，创建Effect对象入全局数组
+    - 处理 Effect：也是在commit阶段处理
+      - 新的hook以及新的effect创建完成之后, 余下逻辑与初次渲染完全一致. 处理 Effect 回调时也会根据effect.tag进行判断: 只有effect.tag包含HookHasEffect时才会调用effect.destroy和effect.create()
+
+###### 组件销毁
+
+当function组件被销毁时, fiber节点必然会被打上Deletion标记, 即fiber.flags |= Deletion. 带有Deletion标记的fiber在commitMutationEffects被处理
+
+代码见：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitMutationEffects
+
+- 在commitDeletion函数中调用unmountHostComponents->commitUnmount, 在commitUnmount中, 执行effect.destroy(), 结束整个闭环.
 
 #### 极简useState-hook的实现
 

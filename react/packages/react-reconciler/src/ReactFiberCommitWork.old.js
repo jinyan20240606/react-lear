@@ -317,7 +317,12 @@ function commitBeforeMutationLifeCycles(
 }
 
 /**
- * 该方法会遍历FunctionComponentUpdateQueue的effectList，执行每个effect的destroy销毁方法：如包含执行所有useLayoutEffect hook的销毁函数
+ * 调用关系: commitMutationEffects->commitWork->commitHookEffectListUnmount.
+ * 
+ * 该方法会遍历FunctionComponentUpdateQueue的effectList，执行每个effect符合Tag的情况下的的destroy销毁方法：仅useLayoutEffect符合传入的Tag 即执行其销毁函数
+ * 
+ * 从判断的tag来看：commitHookEffectListUnmount函数只处理由useLayoutEffect()创建的effect.
+    同步调用effect.destroy().
  */
 function commitHookEffectListUnmount(tag: number, finishedWork: Fiber) {
   // 1- 读取当前fiber的updateQueue，
@@ -395,10 +400,15 @@ function commitHookEffectListMount(tag: number, finishedWork: Fiber) {
 }
 
 /**
- * 针对函数组件的FunctionComponentUpdateQueue的effectList链表遍历，统一入队 被动副作用标记类型即useEffect类型的effect
+ * 针对函数组件的wipFiber.updateQueue:FunctionComponentUpdateQueue存的Effect对象链表遍历
+ * 
+ * 把带有Passive标记的effect筛选出来(由useEffect创建), 添加到一个全局数组(pendingPassiveHookEffectsUnmount和pendingPassiveHookEffectsMount).
+ * 
+ * Effect对象链表：存着当前fiber节点上所有hook的Effect链表，
  * @param {*} finishedWork 
  */
 function schedulePassiveEffects(finishedWork: Fiber) {
+  // 存着当前fiber节点上所有hook的Effect链表
   const updateQueue: FunctionComponentUpdateQueue | null = (finishedWork.updateQueue: any);
   const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
   if (lastEffect !== null) {
@@ -474,15 +484,15 @@ export function commitPassiveEffectDurations(
 }
 
 /**
- * 根据不同fiber.tag做逻辑处理
+ * （commit-layout阶段的执行环节）根据不同fiber.tag做逻辑处理
  * 1. 对于ClassComponent节点, 通过current === null?区分是mount还是update,调用生命周期函数componentDidMount或componentDidUpdate, 调用update.callback回调函数:如: this.setState({}, callback).
  * 2. 对应函数组件
- *    - 他会调用useLayoutEffect hook的回调函数
- *    - 统一入队被动副作用全局队列：useEffect的销毁与回调函数
+ *    - commitHookEffectListMount(处理useLayoutEffect): 他会调用useLayoutEffect hook的回调函数
+ *    - schedulePassiveEffects(处理useEffect): 统一入队被动副作用全局队列：useEffect的销毁与回调函数
  * 3. 对于HostComponent：处理些autoFocus逻辑
  * @param {*} finishedRoot 
  * @param {*} current 
- * @param {*} finishedWork 
+ * @param {*} finishedWork 当前正在被遍历的有副作用的fiber
  * @param {*} committedLanes 
  * @returns 
  */
@@ -508,6 +518,7 @@ function commitLifeCycles(
       ) {
         try {
           startLayoutEffectTimer();
+          // 参数是HookLayout | HookHasEffect,所以只处理由useLayoutEffect()创建的effect
           commitHookEffectListMount(HookLayout | HookHasEffect, finishedWork);
         } finally {
           recordLayoutEffectDuration(finishedWork);
@@ -516,6 +527,7 @@ function commitLifeCycles(
         commitHookEffectListMount(HookLayout | HookHasEffect, finishedWork);
       }
 
+      // 为flushPassiveEffects做准备
       schedulePassiveEffects(finishedWork);
       return;
     }
@@ -1542,7 +1554,7 @@ function commitDeletion(
  * commitMutationEffects  --- 遍历到Update 标记时，执行-> commitWork 
  * 
  * 根据Fiber.tag分别处理：主要处理FunctionComponent和HostComponent类型逻辑，类组件类型等没有任何逻辑
- *    - FunctionComponent：主要执行 commitHookEffectListUnmount
+ *    - FunctionComponent：主要执行 commitHookEffectListUnmount消费HookLayout | HookHasEffect 这俩Effect对象上的标记
  *    - HostComponent：主要执行commitUpdate。将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的值更新渲染在页面对应DOM上
  * @param {*} current 
  * @param {*} finishedWork 
@@ -1576,6 +1588,7 @@ function commitWork(current: Fiber | null, finishedWork: Fiber): void {
             recordLayoutEffectDuration(finishedWork);
           }
         } else {
+          // 在突变阶段调用销毁函数, 保证所有的effect.destroy函数都会在effect.create之前执行
           commitHookEffectListUnmount(HookLayout | HookHasEffect, finishedWork);
         }
         return;
