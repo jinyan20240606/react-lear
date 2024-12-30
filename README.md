@@ -209,6 +209,9 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   // 所以classComponent和Hook都不能脱离fiber而存在
   this.memoizedState: hook = null; // processUpdateQueue最新计算后的fiber.updateQueue.baseState同时也赋值给了fiber.memoizedState
 
+  // dependencies属性会在更新时使用
+  // 主要在Context上下文更新时，用来广播所有子树中依赖这个Context的，判断标准就是fiber节点的dependencies中是否有对应的Context
+  // 详见：更新Context 章节
   this.dependencies = null;
 
   this.mode = mode;
@@ -889,6 +892,77 @@ export type Hook = {|
 > 参考https://7km.top/main/scheduler
 
 源码路径在react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js中的 scheduleUpdateOnFiber 方法中的 ensureRootIsScheduled 方法中
+
+### React的Context原理
+
+Context提供了一种直接访问祖先节点上的状态的方法, 避免了多级组件层层传递props.
+
+有关Context的用法, 请直接查看官方文档, 本文将从fiber树构造的视角, 分析Context的实现原理
+
+#### 总结
+Context的实现思路还是比较清晰, 总体分为 2 步.
+
+在消费状态时,ContextConsumer节点调用readContext(MyContext)获取最新状态.
+在更新状态时, 由ContextProvider节点负责查找所有ContextConsumer节点, 并设置消费节点的父路径上所有节点的fiber.childLanes, 保证消费节点可以得到更新.
+
+#### 创建Context
+
+> 代码见：react/packages/react/src/ReactContext.js@createContext
+
+1. 通过React.createContext这个 api 来创建context对象. 在createContext中, 可以看到context对象的数据结构
+  - context对象的结构如下:
+    - ...
+    - Provider: 提供者, 用于提供context值
+    - Consumer: 消费者, 用于消费contextz值
+2. 在fiber树构造时, 在beginWork中
+  - 首先构造父fiber的子fiber时：当子组件类型为context.Provider的元素类型时，就会创建对应Provider-fiber节点的逻辑在beginWork-updateFunctionComponent(创建子组件为Provider时的子fiber节点)-reconcileChildren创建子fiber逻辑中-mountChildFibers-createFiberFromElement-中createFiberFromTypeAndProps:react/packages/react-reconciler/src/ReactFiber.old.js中
+    - 会判断当前组件类型是否为context.Provider, 如果是, 则创建Provider 类型的fiber节点
+  - 其次上面的子Provider-fiber节点轮换进入beginWork时：
+    - 直接进入针对ContextProvider类型的节点对应的处理函数是updateContextProvider:
+      - 代码见react/packages/react-reconciler/src/ReactFiberBeginWork.old.js@updateContextProvider@beginWork 中的updateContextProvider
+  - updateContextProvider 逻辑：()在fiber初次创建时十分简单, 仅仅就是保存了pendingProps.value做为context的最新值, 之后这个最新的值用于供给消费
+    - pushProvider 逻辑：注意updateContextProvider -> pushProvider中的pushProvider(workInProgress, newValue):
+      - pushProvider实际上是一个存储函数, 利用栈的特性, 先把context._currentValue压栈, 之后更新context._currentValue = nextValue.
+        与pushProvider对应的还有popProvider, 同样利用栈的特性, 把栈中的值弹出, 还原到context._currentValue中.
+        本节重点分析Context Api在fiber树构造过程中的作用. 有关pushProvider/popProvider的具体实现过程(栈存储), 在React 算法之栈操作中有详细图解.
+
+#### 消费Context
+
+使用了MyContext.Provider组件之后, 在fiber树构造过程中, context 的值会被ContextProvider类型的fiber节点所更新. 在后续的过程中, 如何读取消费context._currentValue？
+
+在react中, 共提供了 3 种方式可以消费Context：
+1. 使用MyContext.Consumer组件: 用于JSX. 如, <MyContext.Consumer>(value)=>{}</MyContext.Consumer>
+    - beginWork中, 对于ContextConsumer类型的节点, 对应的处理函数是updateContextConsumer
+    - 路径地址：react/packages/react-reconciler/src/ReactFiberBeginWork.old.js@updateContextConsumer
+2. 使用useContext: 用于function中. 如, const value = useContext(MyContext)
+    - 进入updateFunctionComponent后, 会调用prepareToReadContext
+    无论是初次创建阶段, 还是更新阶段, useContext都直接调用了readContext
+3. class组件中, 使用一个静态属性contextType: 用于class组件中获取context. 如, MyClass.contextType = MyContext;
+    - 进入updateClassComponent后, 会调用prepareToReadContext
+    - 无论constructClassInstance,mountClassInstance, updateClassInstance内部都调用context = readContext((contextType: any));
+
+所以这 3 种方式只是react根据不同使用场景封装的api, 内部都会调用prepareToReadContext和readContext(contextType).
+
+**核心逻辑:**
+路径地址：react/packages/react-reconciler/src/ReactFiberBeginWork.old.js@updateContextConsumer 下的调用的函数
+
+1. prepareToReadContext: 设置currentlyRenderingFiber = workInProgress, 并重置lastContextDependency等全局变量.
+2. readContext: 返回context._currentValue, 并构造一个contextItem添加到workInProgress.dependencies链表之后
+
+#### 更新Context
+
+来到更新阶段, 同样进入updateContextProvider
+react/packages/react-reconciler/src/ReactFiberBeginWork.old.js@updateContextProvider
+
+核心逻辑
+
+1. value没有改变, 直接进入Bailout(可以回顾fiber 树构造(对比更新)中对bailout的解释).
+2. value改变, 调用propagateContextChange
+    - propagateContextChange源码比较长, 核心逻辑如下:
+    向下遍历: 从ContextProvider类型的节点开始, 向下查找所有fiber.dependencies依赖该context的节点(假设叫做consumer).
+    向上遍历: 从consumer节点开始, 向上遍历, 修改父路径上所有节点的fiber.childLanes属性, 表明其子节点有改动, 子节点会进入更新逻辑.
+    通过以上 2 个步骤, 保证了所有消费该context的子节点都会被重新构造, 进而保证了状态的一致性, 实现了context更新
+    - 优化的逻辑：不是无脑的渲染当前Context.Provider下的所有子树，而是只渲染那些依赖于该Context的组件。
 
 ## react16版本对比
 

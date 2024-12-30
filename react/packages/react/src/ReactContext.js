@@ -11,6 +11,22 @@ import {REACT_PROVIDER_TYPE, REACT_CONTEXT_TYPE} from 'shared/ReactSymbols';
 
 import type {ReactContext} from 'shared/ReactTypes';
 
+/**
+ * 主要: 仅初始化context对象，并返回context对象
+ * 1. 其初始值保存在context._currentValue 
+ *    - 同时保存到context._currentValue2. 保存 2 个 value 是为了支持多个渲染器并发渲染
+ * 2. 同时创建了context.Provider, context.Consumer 2 个reactElement对象
+ * 
+ * ```js
+ * // 使用case
+ * const MyContext = React.createContext(defaultValue);
+ * <MyContext.Provider value={someValue}>...</MyContext.Provider>
+   // 声明一个ContextProvider类型的组件
+ * ```
+ * @param {*} defaultValue 默认值
+ * @param {*} calculateChangedBits 计算两个上下文之间的差异 
+ * @returns 返回context对象
+ */
 export function createContext<T>(
   defaultValue: T,
   calculateChangedBits: ?(a: T, b: T) => number,
@@ -32,6 +48,8 @@ export function createContext<T>(
     }
   }
 
+  // 数据结构
+  // 1、创建一个新上下文对象context
   const context: ReactContext<T> = {
     $$typeof: REACT_CONTEXT_TYPE,
     _calculateChangedBits: calculateChangedBits,
@@ -49,12 +67,13 @@ export function createContext<T>(
     Provider: (null: any),
     Consumer: (null: any),
   };
-
+  // 定义Provider组件元素类型，它将上下文值传递给子组件树中的所有消费者。它拥有自己的标识符$$typeof和对上下文对象的引用_context
   context.Provider = {
     $$typeof: REACT_PROVIDER_TYPE,
     _context: context,
   };
 
+  // __DEV__环境用的：声明三个布尔变量用于跟踪是否已经发出特定警告，以避免重复警告
   let hasWarnedAboutUsingNestedContextConsumers = false;
   let hasWarnedAboutUsingConsumerProvider = false;
   let hasWarnedAboutDisplayNameOnConsumer = false;
@@ -139,7 +158,9 @@ export function createContext<T>(
     });
     // $FlowFixMe: Flow complains about missing properties because it doesn't understand defineProperty
     context.Consumer = Consumer;
-  } else {
+  }
+  // 2、如果__DEV__环境，则将context.Consumer指向Consumer，否则指向context
+  else {
     context.Consumer = context;
   }
 

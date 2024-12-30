@@ -232,6 +232,8 @@ if (__DEV__) {
 }
 
 /**
+ * ## 协调子树
+ * 
  * 主要任务：构建生成workInProgress.child 子fiber节点（基于nextChildren和current.child进行diff生成)
  * 
  * diff子树: 将current.child与nextChildren的diff结果即新fiber树赋值到 workInProgress.child 属性（child值就是App起始的fiber树了）
@@ -2899,8 +2901,19 @@ function updatePortalComponent(
   return workInProgress.child;
 }
 
-let hasWarnedAboutUsingNoValuePropOnContextProvider = false;
+let hasWarnedAboutUsingNoValuePropOnContextProvider = false; 
 
+/**
+ * 调用路径：beginWork -> updateContextProvider
+ * 
+ * 针对处理nextChildren的组件元素类型为Context.Provider 类型，构造fiber节点
+ * 
+ * 主要逻辑：
+ * 1. 在fiber初次创建时十分简单, 仅仅就是保存了pendingProps.value做为context的最新值, 之后这个最新的值用于供给消费
+ * 2. update时，在更新值的基础上还会比较旧值与新值并决定是否广播变更
+ * 
+ * @returns 返回workInProgress.child
+ */
 function updateContextProvider(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -2912,6 +2925,7 @@ function updateContextProvider(
   const newProps = workInProgress.pendingProps;
   const oldProps = workInProgress.memoizedProps;
 
+  // 1. 接收新value
   const newValue = newProps.value;
 
   if (__DEV__) {
@@ -2930,37 +2944,53 @@ function updateContextProvider(
     }
   }
 
+  // 2. 更新 ContextProvider中的维护的全局context对象的._currentValue
   pushProvider(workInProgress, newValue);
 
+  // 2-1. 比较旧值与新值并决定是否广播变更
   if (oldProps !== null) {
     const oldValue = oldProps.value;
     const changedBits = calculateChangedBits(context, newValue, oldValue);
+    // 若新旧相同，无改变
     if (changedBits === 0) {
-      // No change. Bailout early if children are the same.
+      // 如果没有变化并且子元素也没有改变，则提前退出以避免不必要的工作
       if (
         oldProps.children === newProps.children &&
         !hasLegacyContextChanged()
       ) {
+        /**
+         * 优化方法，它主要用于减少不必要的重新渲染和协调（reconciliation）。
+         * 
+         * 当React在更新过程中遇到一个组件时，如果发现这个组件的状态（state）、属性（props）、上下文（context）等关键信息都没有变化，
+         * 并且该组件的子树也没有任何待处理的更新或副作用，那么就可以跳过对这个组件及其子树的进一步处理
+         */
         return bailoutOnAlreadyFinishedWork(
           current,
           workInProgress,
           renderLanes,
         );
       }
-    } else {
+    }
+    // 若改变
+    else {
       // The context value changed. Search for matching consumers and schedule
       // them to update.
+      // 广播上下文改变的方法
       propagateContextChange(workInProgress, context, changedBits, renderLanes);
     }
   }
 
   const newChildren = newProps.children;
+  // 3. 执行 reconcileChildren: 协调子树
   reconcileChildren(current, workInProgress, newChildren, renderLanes);
   return workInProgress.child;
 }
 
 let hasWarnedAboutUsingContextAsConsumer = false;
 
+/**
+ * beginWork中处理context.Consumer 组件
+ */
 function updateContextConsumer(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -2992,7 +3022,9 @@ function updateContextConsumer(
       context = (context: any)._context;
     }
   }
+  // 获取newProps
   const newProps = workInProgress.pendingProps;
+  // 获取子组件元素
   const render = newProps.children;
 
   if (__DEV__) {
@@ -3006,8 +3038,11 @@ function updateContextConsumer(
     }
   }
 
+  // 1. 准备读取上下文
   prepareToReadContext(workInProgress, renderLanes);
+  // 2. 读取上下文值
   const newValue = readContext(context, newProps.unstable_observedBits);
+  // 3. 得到子元素树
   let newChildren;
   if (__DEV__) {
     ReactCurrentOwner.current = workInProgress;
@@ -3020,6 +3055,7 @@ function updateContextConsumer(
 
   // React DevTools reads this flag.
   workInProgress.flags |= PerformedWork;
+  // 4. 协调子树
   reconcileChildren(current, workInProgress, newChildren, renderLanes);
   return workInProgress.child;
 }
@@ -3049,6 +3085,11 @@ export function markWorkInProgressReceivedUpdate() {
 }
 
 /**
+ * 优化方法，它主要用于减少不必要的重新渲染和协调（reconciliation）。
+ * 
+ * 当React在更新过程中遇到一个组件时，如果发现这个组件的状态（state）、属性（props）、上下文（context）等关键信息都没有变化，
+ * 并且该组件的子树也没有任何待处理的更新或副作用，那么就可以跳过对这个组件及其子树的进一步处理
+ * 
  * 复用clone current.child 作为workInProgress.child
  * 
  * @returns workInProgress.child或null

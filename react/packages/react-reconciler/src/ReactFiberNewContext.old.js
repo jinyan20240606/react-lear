@@ -72,6 +72,23 @@ export function exitDisallowedContextReadInDEV(): void {
   }
 }
 
+/**
+ * 主要是更新Provider组件中对应的context对象中的_currentValue值（用于Context.Provider 组件的）
+ * 
+ * 还有利用栈存储来快速恢复上次值：pushProvider实际上是一个存储函数, 利用栈的特性, 先把context._currentValue压栈, 之后更新context._currentValue = nextValue.
+        与pushProvider对应的还有popProvider, 同样利用栈的特性, 把栈中的值弹出, 还原到context._currentValue中.
+        本节重点分析Context Api在fiber树构造过程中的作用. 有关pushProvider/popProvider的具体实现过程(栈存储), 在React 算法之栈操作中有详细图解
+ * 
+ * ```js
+ * // 示例结构如下
+  context.Provider = {
+     $$typeof: REACT_PROVIDER_TYPE,
+     _context: context,
+   };
+  ```
+ * @param {*} providerFiber workInProgress 传入的provider fiber 节点
+ * @param {*} nextValue  newValue Provider组件的value
+ */
 export function pushProvider<T>(providerFiber: Fiber, nextValue: T): void {
   const context: ReactContext<T> = providerFiber.type._context;
 
@@ -125,6 +142,13 @@ export function popProvider(providerFiber: Fiber): void {
   }
 }
 
+/**
+ * 若新旧相同则返回0，否则返回changedBits
+ * @param {*} context 
+ * @param {*} newValue 
+ * @param {*} oldValue 
+ * @returns 
+ */
 export function calculateChangedBits<T>(
   context: ReactContext<T>,
   newValue: T,
@@ -152,6 +176,11 @@ export function calculateChangedBits<T>(
   }
 }
 
+/**
+ * 确保路径上的所有父节点都被正确地标记为有工作待做
+ * @param {*} parent 
+ * @param {*} renderLanes 
+ */
 export function scheduleWorkOnParentPath(
   parent: Fiber | null,
   renderLanes: Lanes,
@@ -179,6 +208,19 @@ export function scheduleWorkOnParentPath(
   }
 }
 
+/**
+ * 当一个 <Context.Provider> 的值发生变化时，React 需要通知所有订阅了该上下文的消费者组件去更新它们自己。
+ * 这个函数负责遍历整个Fiber树，找到所有依赖于特定上下文的组件，并为这些组件安排一次新的渲染
+ * 
+ * 优化的逻辑：不是无脑的渲染当前Context.Provider下的所有子树，而是只渲染那些依赖于该Context的组件。
+ * 
+ * 核心逻辑如下:
+ * 
+ * - 向下遍历: 从ContextProvider类型的节点开始, 向下查找所有fiber.dependencies依赖该context的节点(假设叫做consumer)，执行scheduleWorkOnParentPath
+ * - 向上遍历: scheduleWorkOnParentPath中：从consumer节点开始, 向上遍历, 修改父路径上所有节点的fiber.childLanes属性, 表明其子节点有改动, 子节点会进入更新逻辑.
+
+通过以上 2 个步骤, 保证了所有消费该context的子节点都会被重新构造, 进而保证了状态的一致性, 实现了context更新
+ */
 export function propagateContextChange(
   workInProgress: Fiber,
   context: ReactContext<mixed>,
@@ -190,12 +232,16 @@ export function propagateContextChange(
     // Set the return pointer of the child to the work-in-progress fiber.
     fiber.return = workInProgress;
   }
+  // 主循环：遍历整个Fiber树
   while (fiber !== null) {
     let nextFiber;
 
     // Visit this fiber.
+    // 获取当前节点的依赖关系列表
     const list = fiber.dependencies;
+    // 如果当前节点有依赖项
     if (list !== null) {
+      // 准备向下遍历子节点
       nextFiber = fiber.child;
 
       let dependency = list.firstContext;
@@ -206,7 +252,7 @@ export function propagateContextChange(
           (dependency.observedBits & changedBits) !== 0
         ) {
           // Match! Schedule an update on this fiber.
-
+          // 匹配！为这个节点强制安排一次新的渲染
           if (fiber.tag === ClassComponent) {
             // Schedule a force update on the work-in-progress.
             const update = createUpdate(
@@ -220,26 +266,32 @@ export function propagateContextChange(
             // worth fixing.
             enqueueUpdate(fiber, update);
           }
+          // 更新当前节点及其交替节点的渲染优先级
           fiber.lanes = mergeLanes(fiber.lanes, renderLanes);
           const alternate = fiber.alternate;
           if (alternate !== null) {
             alternate.lanes = mergeLanes(alternate.lanes, renderLanes);
           }
+          // 确保路径上的所有父节点都被正确地标记为有工作待做
           scheduleWorkOnParentPath(fiber.return, renderLanes);
 
-          // Mark the updated lanes on the list, too.
+          // 更新依赖项列表的渲染优先级
           list.lanes = mergeLanes(list.lanes, renderLanes);
 
-          // Since we already found a match, we can stop traversing the
-          // dependency list.
+          // 找到匹配后停止遍历依赖项列表
           break;
         }
+        // 继续检查下一个依赖项
         dependency = dependency.next;
       }
-    } else if (fiber.tag === ContextProvider) {
+    }
+    // 如果是另一个 ContextProvider，决定是否继续深入遍历其子节点
+    else if (fiber.tag === ContextProvider) {
       // Don't scan deeper if this is a matching provider
       nextFiber = fiber.type === workInProgress.type ? null : fiber.child;
-    } else if (
+    }
+    // 处理脱水状态下的 Suspense 边界
+    else if (
       enableSuspenseServerRenderer &&
       fiber.tag === DehydratedFragment
     ) {
@@ -262,20 +314,23 @@ export function propagateContextChange(
       // this fiber to indicate that a context has changed.
       scheduleWorkOnParentPath(parentSuspense, renderLanes);
       nextFiber = fiber.sibling;
-    } else {
+    }
+    // 向下遍历子节点,找到有依赖关系属性的列表
+    else {
       // Traverse down.
       nextFiber = fiber.child;
     }
 
+    // 设置子节点或兄弟节点的 return 指针
     if (nextFiber !== null) {
       // Set the return pointer of the child to the work-in-progress fiber.
       nextFiber.return = fiber;
     } else {
-      // No child. Traverse to next sibling.
+      // 如果没有子节点或兄弟节点，回溯到父节点
       nextFiber = fiber;
       while (nextFiber !== null) {
         if (nextFiber === workInProgress) {
-          // We're back to the root of this subtree. Exit.
+          // 回到根节点，退出循环
           nextFiber = null;
           break;
         }
@@ -287,13 +342,22 @@ export function propagateContextChange(
           break;
         }
         // No more siblings. Traverse up.
+        // 没有兄弟节点，继续回溯到父节点
         nextFiber = nextFiber.return;
       }
     }
+    // 更新 fiber 变量为下一个需要处理的节点
     fiber = nextFiber;
   }
 }
 
+/**
+ * updateContextConsumer --> prepareToReadContext
+ * 
+ * 主要逻辑：设置currentlyRenderingFiber = workInProgress, 并重置lastContextDependency等全局变量.
+ * @param {*} workInProgress 
+ * @param {*} renderLanes 
+ */
 export function prepareToReadContext(
   workInProgress: Fiber,
   renderLanes: Lanes,
@@ -316,6 +380,13 @@ export function prepareToReadContext(
   }
 }
 
+/**
+ * 返回context._currentValue, 并构造一个contextItem添加到workInProgress.dependencies链表之后.
+ * 
+ * 这个readContext并不是纯函数, 它还有一些副作用, 会更改workInProgress.dependencies, 
+ * 其中contextItem.context保存了当前context的引用. 这个dependencies属性会在更新时使用, 用于判定是否依赖了ContextProvider中的值.
+ * 返回context._currentValue之后, 之后继续进行fiber树构造直到全部完成即可.
+ */
 export function readContext<T>(
   context: ReactContext<T>,
   observedBits: void | number | boolean,
