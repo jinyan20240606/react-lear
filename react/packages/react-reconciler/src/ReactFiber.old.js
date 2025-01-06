@@ -254,10 +254,11 @@ export function resolveLazyComponentTag(Component: Function): WorkTag {
 
 // This is used to create an alternate fiber to do work on.
 /**
- * 为新一轮渲染工作初始化双缓存workInProgress节点 ====> 
+ * 为新一轮渲染工作初始化双缓存workInProgress节点
  * 
- * 双缓存是缓存rootFiber根节点开始。rootFiber的alternate值就是缓存的另一份B版rootFiber
- * 
+ * ### 注意
+ * 1. workInProgress.child = current.child. 所以在进入后续逻辑循环构造之前, HostRootFiber与HostRootFiber.alternate共用一个child(这里是fiber(<App/>)).
+ * 2. 双缓存是缓存fiberRoot的rootFiber根节点开始。rootFiber的alternate值就是缓存的另一份B版rootFiber
  * B版rootFiber节点取名字叫做全局变量WIP(workInProgress)
  * 
  * @param {*} current fiberRoot.current 即rootFiber根节点

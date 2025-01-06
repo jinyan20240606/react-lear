@@ -571,9 +571,10 @@ function requestRetryLane(fiber: Fiber) {
  *    - fiberRoot根实例调度：ensureRootIsScheduled(root, eventTime)  => 调度核心perform[Sync|Concurrent]WorkOnRoot(root)回调任务;
  *        - 执行performSyncWorkOnRoot回调时，就会实际使用这个update对象负载渲染到页面上去
  *    - 调度fiberRoot的pendingInteractions：schedulePendingInteractions(root, lane);
+ * @param {*} fiber current级别的实际页面上的触发更新的当前fiber节点
  */
 export function scheduleUpdateOnFiber(
-  /** 需要更新的 Fiber 节点 */
+  /** current级别的实际页面上的触发更新的当前fiber节点 */
   fiber: Fiber,
   /** 请求的更新的优先级通道 */
   lane: Lane,
@@ -585,7 +586,7 @@ export function scheduleUpdateOnFiber(
   // 开发环境中，如果在渲染阶段进行更新，会发出警告
   warnAboutRenderPhaseUpdatesInDEV(fiber);
 
-  // 标记更新通道：从给定的 Fiber 节点向上追溯到根节点，并给每个追溯的父节点都标记更新车道。如果根节点已经卸载，则发出警告并返回 null
+  // 1. 标记更新通道：从给定的 Fiber 节点向上追溯到根节点，并给每个追溯的父节点都标记更新车道。如果根节点已经卸载，则发出警告并返回 null
   // 正常返回rootFiber根节点的stateNode值即根实例对象: fiberRoot
   const root = markUpdateLaneFromFiberToRoot(fiber, lane);
   // 如果向上遍历时没有找到根节点HostRoot即rootFiber，直接警告return
@@ -630,7 +631,8 @@ export function scheduleUpdateOnFiber(
   // 获取当前优先级
   const priorityLevel = getCurrentPriorityLevel();
 
-  // 如果更新请求是同步的：  初次挂载时当前上下文为8进入第一个条件分支
+  // 2. 调度更新
+  // 如果更新请求是同步的：  初次挂载时当前上下文为LegacyUnbatchedContext即8进入第一个条件分支：初次挂载时会`function legacyRenderSubtreeIntoContainer(`中的unbatchedUpdates函数改变上下文为8
   // // 如果当前在非批量更新上下文中且不在渲染或提交上下文中，则不需要调度更新，直接执行工作循环。
   // // 否则，执行根节点调度，并调度待处理的交互。如果当前没有上下文，则重置渲染计时器并刷新同步回调队列。
   if (lane === SyncLane) {
@@ -640,7 +642,7 @@ export function scheduleUpdateOnFiber(
       // Check if we're not already rendering
       (executionContext & (RenderContext | CommitContext)) === NoContext
     ) {
-      // 处理fiberRoot的pendingInteractions属性。注册根节点的待处理交互，以避免丢失追踪的交互数据.
+      // 性能追踪相关：处理fiberRoot的pendingInteractions属性。注册根节点的待处理交互，以避免丢失追踪的交互数据.
       schedulePendingInteractions(root, lane);
 
       // 立即执行同步工作 --- 进入render阶段+commit阶段的入口方法
@@ -648,7 +650,7 @@ export function scheduleUpdateOnFiber(
     } else {// 在批量上下文中或渲染上下文时，则需要调度更新
       // 根节点调度
       ensureRootIsScheduled(root, eventTime);
-      // 处理fiberRoot的pendingInteractions属性。注册根节点的待处理交互，以避免丢失追踪的交互数据
+      // 调度追踪相关：处理fiberRoot的pendingInteractions属性。注册根节点的待处理交互，以避免丢失追踪的交互数据
       schedulePendingInteractions(root, lane);
       if (executionContext === NoContext) {
         // 重置渲染计时器
@@ -679,6 +681,7 @@ export function scheduleUpdateOnFiber(
       }
     }
     // Schedule other updates after in case the callback is sync.
+    // 根节点调度
     ensureRootIsScheduled(root, eventTime);
     schedulePendingInteractions(root, lane);
   }
@@ -698,12 +701,16 @@ export function scheduleUpdateOnFiber(
 /**
  * 函数主要用于确保更新请求能够正确地传播到根节点，从而触发相应的更新流程
  * 
- * 从给定的 Fiber 节点向上追溯到根节点，并在沿途的所有 Fiber 节点上标记更新通道lane
+ * 1. 以sourceFiber为起点, 设置起点的fiber.lanes
+ * 2. 从起点开始, 直到HostRootFiber, 设置父路径上所有节点(也包括fiber.alternate)的fiber.childLanes.
+ * 3. 通过设置fiber.lanes和fiber.childLanes就可以辅助判断子树是否需要更新(在下文循环构造中详细说明).
  * 
    一直向上遍历到根节点，给所有父节点都合并当前节点的lane属性，原因如下：
    * 1. 父节点统一管理更新： App 节点有多个子节点，每个子节点都可能有独立的更新请求。通过更新 childLanes，App 节点可以集中管理这些更新请求，确保在一次渲染周期中处理所有相关的更新
    * 2. 优先级管理：如果 Header 节点和 Footer 节点都有更新请求，但 Header 节点的更新请求优先级更高，父节点可以通过 childLanes 属性来决定先处理 Header 节点的更新
    * 3. 传递更新信息：当一个子节点接收到更新请求时，仅更新该子节点的 lanes 属性是不够的。父节点也需要知道这个更新请求的存在，以便在需要时重新渲染整个子树
+   @param {*} sourceFiber 就是传入的current级别当前实际页面中触发更新的fiber节点
+   @returns 返回FiberRoot 根节点
 */
 function markUpdateLaneFromFiberToRoot(
   sourceFiber: Fiber,
@@ -711,8 +718,8 @@ function markUpdateLaneFromFiberToRoot(
   lane: Lane,
 ): FiberRoot | null {
   // Update the source fiber's lanes
-  // 更新源 Fiber 节点的 lanes 属性，将其与新的车道合并。
-  //如果源 Fiber 节点有交替节点（alternate），也更新交替节点的 lanes 属性。
+  // 1. 更新源 Fiber 节点的 lanes 属性，将其与新的车道合并。
+  // 如果源 Fiber 节点有交替节点（alternate），也更新交替节点的 lanes 属性。
   sourceFiber.lanes = mergeLanes(sourceFiber.lanes, lane);
   let alternate = sourceFiber.alternate;
   if (alternate !== null) {
@@ -727,7 +734,7 @@ function markUpdateLaneFromFiberToRoot(
     }
   }
   // Walk the parent path to the root and update the child expiration time.
-  // 向上追溯到根节点,并给沿途父节点更新lanes通道：
+  // 2. 向上追溯到根节点,并给沿途父节点更新lanes通道：
   let node = sourceFiber;
   let parent = sourceFiber.return;
   while (parent !== null) {
@@ -1065,8 +1072,9 @@ function markRootSuspended(root, suspendedLanes) {
  * 一般用作调度器的调度回调单元
  * 
  * 0. flushPassiveEffects调度处理副作用
- * 1. 执行 renderRootSync，进入 renderer协调器阶段 构建 fiber树
- *    - 先getNextLanes获取本次高优lanes，然后传入执行
+ * 1. 执行 renderRootSync
+ *    - 执行前：先getNextLanes获取本次高优lanes，然后传入执行renderRootSync
+ *    - 进入 renderer协调器阶段 构建 fiber树
  * 2. 执行 commitRoot ，进入commit渲染器阶段，将fiber树渲染到页面上
  * 3. 最后：继续调度下一轮 ensureRootIsScheduled
  * @param {*} root fiberRoot
@@ -1416,11 +1424,16 @@ export function popRenderLanes(fiber: Fiber) {
 }
 
 /**
- * 刷新栈帧----> fiber架构的核心模型，栈帧管理实现可控协程
+ * 刷新栈帧----> 主要就是重置初始化全局变量workInProgress为fiberRoot.current即rootFiber副本及其相关变量
+ * 
+ * 
+ * 更新前还没有缓存树，workInProgress默认是null，这个主要是新一轮初始化workInProgress的child，flags 和effects 这3个核心属性
  * 
  * 1. 初始化根节点fiberRoot的状态，取消之前的超时处理，清理中断的工作
  * 2. 初始化相关 workInProgress 和 workInProgressRootXXXX 全局状态变量即新的工作栈
+ *      - 初始化新建workInProgress值
  *      - 设置rootFiber的alternate属性  ---> rootFiber开始的双缓存工作
+ *      - 初始化child，flags 和effects 这3个核心属性
  */
 function prepareFreshStack(root: FiberRoot, lanes: Lanes) {
   // 初始化根节点标记：完成的工作为null和完成的通道为null
@@ -1449,7 +1462,7 @@ function prepareFreshStack(root: FiberRoot, lanes: Lanes) {
   }
   // 设置新的工作栈======全局变量
   workInProgressRoot = root;// workInProgressRoot 设置为当前的根节点
-  workInProgress = createWorkInProgress(root.current, null);// workInProgress 表示当前正在处理的工作
+  workInProgress = createWorkInProgress(root.current, null);// workInProgress 表示初始化新建workInProgress
   workInProgressRootRenderLanes = subtreeRenderLanes = workInProgressRootIncludedLanes = lanes; // 各种车道（lanes）相关的信息被初始化
   workInProgressRootExitStatus = RootIncomplete;// workInProgressRootExitStatus 设置为 RootIncomplete，表示根节点的工作尚未完成。
   workInProgressRootFatalError = null;
@@ -1632,8 +1645,8 @@ export function renderHasNotSuspendedYet(): boolean {
  * ## 工作循环的入口：主要执行workLoopSync 构建fiber树和dom树和effectList链表
  * 1. 处理执行上下文
  * 2. 重置Hook Dispatcher
- * 3. 初始化fiber栈
- * 4. 执行workLoopSync
+ * 3. 刷新栈帧：prepareFreshStack(root, lanes);
+ * 4. 开始执行workLoopSync
  * 
  * @param {*} FiberRoot 当前根节点的 FiberRoot 树
  * @param {*} lanes 需要处理的高优通道
@@ -1716,12 +1729,11 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
   return workInProgressRootExitStatus;
 }
 
-// The work loop is an extremely hot path. Tell Closure not to inline it.
-/** @noinline */
 /**
+ * 上级方法：renderRootSync
  * 从workInProgress起从上到下循环执行 performUnitOfWork
  * 
- * @param workInProgress 全局变量 rootFiber的AB双缓存的根节点
+ * @param workInProgress 全局变量 wip的rootFiber 缓存根节点，不管mount还是update都是从根节点开始向下遍历
  */
 function workLoopSync() {
   // 判断workInProgress值，从rootFiber内存fiber节点开始，不断赋值workInProgress变量， 一直向下深度优先遍历
@@ -1816,11 +1828,11 @@ function workLoopConcurrent() {
 /**
  * 渲染器工作循环 workLoopSync 方法的循环执行的工作单元
  * 
- * 负责处理每个 Fiber 节点的渲染任务
+ * 不管mount还是update都是，自顶向下循环处理每个 Fiber 节点的渲染任务
  * 1. beginWork，结果值赋给next变量
  * 2. 判断next为null(即递到叶子节点时)时开始向上归completeWork。非null改变workInProgress为next触发上层while循环
  * 
- * @param {*} unitOfWork WIP的内存fiber节点 首次循环时值为 workInProgress 缓存根节点
+ * @param {*} unitOfWork WIP的内存fiber节点 首次循环时不管mount还是update阶段，首次workInProgress 值都为顶部根节点rootFiber开始的
  */
 function performUnitOfWork(unitOfWork: Fiber): void {
   /** 获取当前unitOfWork对应的上次渲染的真实fiber节点 */
@@ -1866,7 +1878,7 @@ function performUnitOfWork(unitOfWork: Fiber): void {
           - 为 DOM 节点设置属性, 绑定事件(这里先说明有这个步骤, 详细的事件处理流程, 在合成事件原理中详细说明).
       - 设置fiber.flags标记
  * 2. 把当前 fiber 对象的副作用队列(firstEffect和lastEffect)添加到父节点的副作用队列之后, 更新父节点的firstEffect和lastEffect指针
-      - beginWork中只有在删除操作时，才会更新firstEffect，其他情况只会增加flags标记Deletion
+      - beginWork中只有在删除操作时，才会更新firstEffect，其他情况默认是没有firstEffect链表的，只会增加flags标记如Deletion等
  * 3. 识别beginWork阶段设置的fiber.flags, 判断当前 fiber 是否有副作用(增,删,改), 如果有, 需要将当前 fiber 加入到父节点的effects队列, 等待commit阶段处理
  * 
  * @param {*} unitOfWork 当前要完成的fiber节点
@@ -3761,6 +3773,9 @@ function scheduleInteractions(
   }
 }
 
+/**
+ * enableSchedulerTracing 模式，没启用就退出
+ */
 function schedulePendingInteractions(root: FiberRoot, lane: Lane | Lanes) {
   // This is called when work is scheduled on a root.
   // It associates the current interactions with the newly-scheduled expiration.

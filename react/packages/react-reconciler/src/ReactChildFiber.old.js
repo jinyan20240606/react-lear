@@ -1239,7 +1239,7 @@ function ChildReconciler(shouldTrackSideEffects) {
    * 2. currentFirstChild无值即挂载时：只创建fiber节点，关联return属性即可
    * @param {*} returnFiber workInProgress 
    * @param {*} currentFirstChild mount时为null，update时为current.child
-   * @param {*} element 待更新的react元素子树
+   * @param {*} element 上层传入的 newchild 待更新的react元素子树
    * @param {*} lanes renderLanes
    * @returns 返回diff后的新fiber节点作为赋值workInProgress.child用（复用的或新建的）
    */
@@ -1407,7 +1407,7 @@ function ChildReconciler(shouldTrackSideEffects) {
   // itself. They will be added to the side-effect list as we pass through the
   // children and the parent.
   /**
-   * 主要是协调chidlren进行diff对比，高效更新，计算生成子fiber节点（returnFiber的child值）
+   * 主要是协调nextchidlren进行diff对比，高效更新，计算生成子fiber节点（returnFiber的child值）
    * 
    * 1. 对于children是单个一级子元素：主要执行 reconcileSingleXXXElement 方法
    * 2. 对于children是多个一级子元素：主要执行 reconcileChildrenArray
@@ -1415,7 +1415,7 @@ function ChildReconciler(shouldTrackSideEffects) {
    * 4. 每个fiber节点都会对应加上flags标记
    * @param {*} returnFiber workInProgress
    * @param {*} currentFirstChild 
-   * @param {*} newChild 
+   * @param {*} newChild 上层传入的nextChildren
    * @param {*} lanes 
    * @returns 返回diff后的新fiber链表节点或null---作为生成workInProgress.child
    */
@@ -1575,6 +1575,9 @@ export const reconcileChildFibers = ChildReconciler(true);
  */
 export const mountChildFibers = ChildReconciler(false);
 
+/**
+ * 不是递归克隆，关于fiber构造相关的都是下钻到子一级的child及sibling级别的，非递归子树
+ */
 export function cloneChildFibers(
   current: Fiber | null,
   workInProgress: Fiber,

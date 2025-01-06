@@ -881,13 +881,15 @@ function updateBlock<Props, Data>(
 
 /**
  * 与updateHostRoot核心思路类似:以下3个步骤
- * 1. 计算memoizedState值：根据fiber.pendingProps, fiber.updateQueue等输入数据状态, 计算fiber.memoizedState作为输出状态
- * 2. 获取nextChildren：获取reactELement子树
+ * 1. 钩子执行和状态计算：执行mountClassInstance 或 updateClassInstance
+ *    - 相关class的生命周期钩子
+ *    - processUpdateQueue等方法进行相关fiber上的状态维护：如memoizedState值：根据fiber.pendingProps, fiber.updateQueue等输入数据状态, 计算fiber.memoizedState作为输出状态
+ * 2. finishClassComponent方法：获取nextChildren：即reactELement子树
       1. 构建React.Component实例--把新实例挂载到fiber.stateNode上
       2. 执行render之前的生命周期函数
       3. 执行render方法, 获取nextChildren（ReactElement）用于后面diff
       4. 根据实际情况, 设置fiber.flags
-   3. 根据nextChildren即ReactElement对象, 调用reconcileChildren最终生成Fiber子节点(只生成次级子节点)
+   3. finishClassComponent方法：根据nextChildren即ReactElement对象, 调用reconcileChildren最终生成Fiber子节点(只生成次级子节点)
         根据实际情况, 设置fiber.flags
 
   @return 最终返回生成的子fiber节点：workInProgress.child;
@@ -925,9 +927,12 @@ function updateClassComponent(
   } else {
     hasContext = false;
   }
+  // Context 全局变量重置
   prepareToReadContext(workInProgress, renderLanes);
 
+  // 获取class类实例
   const instance = workInProgress.stateNode;
+  /** 用户钩子决定：是否需要更新 */
   let shouldUpdate;
   if (instance === null) {
     if (current !== null) {
@@ -985,6 +990,18 @@ function updateClassComponent(
   return nextUnitOfWork;
 }
 
+/**
+ * 执行实际的render方法渲染和 协调子树
+ * 1. 更新ref引用并获取当前fiber节点的捕获错误标记
+ * 2. 执行instance.render() 设置nextChildren变量
+ *    - 若有错误标记且没定义getDerivedStateFromError，则设所有子节点nextChildren 为 null
+ * 3. 协调子树，设置workInProgress.child
+ * 
+ * @params shouldUpdate 是否应该更新组件的布尔值
+ * @params hasContext 是否有上下文
+ * @params Component 类组件的构造函数
+ * @returns workInProgress.child
+ */
 function finishClassComponent(
   current: Fiber | null,
   workInProgress: Fiber,
@@ -994,8 +1011,10 @@ function finishClassComponent(
   renderLanes: Lanes,
 ) {
   // Refs should update even if shouldComponentUpdate returns false
+  // 0. 更新ref引用
   markRef(current, workInProgress);
 
+  // 1. 捕获错误标记
   const didCaptureError = (workInProgress.flags & DidCapture) !== NoFlags;
 
   if (!shouldUpdate && !didCaptureError) {
@@ -1004,14 +1023,18 @@ function finishClassComponent(
       invalidateContextProvider(workInProgress, Component, false);
     }
 
+    // 直接
     return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes);
   }
 
+  // 获取实例
   const instance = workInProgress.stateNode;
 
-  // Rerender
   ReactCurrentOwner.current = workInProgress;
+  // 2. 执行instance.render() 设置nextChildren变量
   let nextChildren;
+  // 如果有错误标记且没定义getDerivedStateFromError，则设所有子节点nextChildren 为 null
+  // 否则，就正常执行instance.render()
   if (
     didCaptureError &&
     typeof Component.getDerivedStateFromError !== 'function'
@@ -1048,7 +1071,11 @@ function finishClassComponent(
   }
 
   // React DevTools reads this flag.
+  // 标记已完成工作
   workInProgress.flags |= PerformedWork;
+  // 3. 协调子树
+  // 如果捕获了错误，则强制卸载当前子节点并重新协调
+  // 否则，正常协调子树，设置workInProgress.child
   if (current !== null && didCaptureError) {
     forceUnmountCurrentAndReconcile(
       current,
@@ -1089,8 +1116,9 @@ function pushHostRootContext(workInProgress) {
 
 /**
  * beginWork--switch--HostRoot分支实际方法：目的是利用current.child和nextCHildren生成workInPropgress的child-fiber节点
- * 1. processUpdateQueue：计算workInProgress.updateQueue要更新workInProgress.memoizedState值
- * 2. reconcileChildren：协调diff对比 children子树
+ * 1. fiber状态维护：processUpdateQueue：计算workInProgress.updateQueue要更新workInProgress.memoizedState值
+ * 2. 获取nextChildren
+ * 3. reconcileChildren：协调diff对比 nextChildren子树与current.child, 最终生成workInProgress.child返回
  * 
  * @param {*} current 上次渲染的页面真实rootFiber根节点
  * @param {*} workInProgress 正在处理的rootFiber副本节点----双缓存流程
@@ -3085,12 +3113,12 @@ export function markWorkInProgressReceivedUpdate() {
 }
 
 /**
- * 优化方法，它主要用于减少不必要的重新渲染和协调（reconciliation）。
+ * beginWork的优化方法，略过子树协调即dom diff，直接进入下个阶段completeWork，它主要用于减少不必要的重新渲染和协调（reconciliation）。
  * 
  * 当React在更新过程中遇到一个组件时，如果发现这个组件的状态（state）、属性（props）、上下文（context）等关键信息都没有变化，
- * 并且该组件的子树也没有任何待处理的更新或副作用，那么就可以跳过对这个组件及其子树的进一步处理
- * 
- * 复用clone current.child 作为workInProgress.child
+ * 1. 如果同时满足!includesSomeLane(renderLanes, workInProgress.childLanes), 表明该 fiber 节点及其子树都无需更新, 返回null-----可直接进入回溯阶段(completeUnitOfWork)
+ * 2. 如果不满足!includesSomeLane(renderLanes, workInProgress.childLanes), 意味着子节点需要更新, 复用clone current.child 作为workInProgress.child 并返回
+ *    - 只是克隆子节点级别，不是子树级别，子节点的子节点链接的还是页面上current级别的公用的那个节点
  * 
  * @returns workInProgress.child或null
  */
@@ -3189,13 +3217,13 @@ function remountFiber(
 }
 
 /**
- * beginWork：主要任务是利用current.child和nextCHildren生成workInPropgress的child-fiber子节点
+ * beginWork：主要任务是利用current.child和nextCHildren经过协调diff生成workInPropgress的child-fiber子节点
  * 
  * 1. update时：如果current存在，在满足一定优化条件时可以复用current节点，这样就能克隆current.child作为workInProgress.child，而不需要新建workInProgress.child。
 
    2. mount时：若current === null。会根据fiber.tag不同，创建不同类型的子Fiber节点
 
-   3. 根据 ReactElement对象创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
+   3. 根据 组件render后的ReactElement对象创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
       设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
       设置fiber.stateNode局部状态(如Class类型节点: fiber.stateNode=new Class())
  * 
@@ -3229,7 +3257,7 @@ function beginWork(
     }
   }
 
-  // 是否需要更新
+  // update阶段：预先判断下是否需要更新
   if (current !== null) {
     const oldProps = current.memoizedProps;
     const newProps = workInProgress.pendingProps;
@@ -3245,8 +3273,9 @@ function beginWork(
       // This may be unset if the props are determined to be equal later (memo).
       didReceiveUpdate = true;
     }
-    // current的memoizedProps与wip的pendingProps没啥变化：不需要更新则直接复用current.child为wip的child
+    // current的memoizedProps与wip的pendingProps没啥变化且(当前渲染优先级renderLanes不包括fiber.lanes)：不需要更新则直接复用current.child为wip的child
     else if (!includesSomeLane(renderLanes, updateLanes)) {
+      // 当前渲染优先级renderLanes不包括fiber.lanes, 表明当前fiber节点无需更新
       didReceiveUpdate = false;
       // This fiber does not have any pending work. Bailout without entering
       // the begin phase. There's still some bookkeeping we that needs to be done
@@ -3419,6 +3448,7 @@ function beginWork(
           return updateOffscreenComponent(current, workInProgress, renderLanes);
         }
       }
+      // 当前fiber节点无需更新, 调用bailoutOnAlreadyFinishedWork循环检测子节点是否需要更新
       return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes);
     } else {
       if ((current.flags & ForceUpdateForLegacySuspense) !== NoFlags) {
@@ -3434,13 +3464,14 @@ function beginWork(
       }
     }
   }
-  // 标记：不需要更新，为挂载阶段
+  // mount阶段标记：不需要更新，为挂载阶段
   else {
     
     didReceiveUpdate = false;
   }
 
-  // 进入 beginWork 阶段之前，设置当前fiber优先级lanes为NoLanes最高优先级
+  // 下面为 update阶段和mount阶段共同走的逻辑
+  // 进入 beginWork 阶段之前，设置当前fiber优先级lanes为NoLanes最高优先级：看来是每个遍历到的fiber节点都会加Nolanes最高优先级
   workInProgress.lanes = NoLanes;
   // 处理不同类型的 Fiber 节点
   switch (workInProgress.tag) {

@@ -696,10 +696,13 @@ function cutOffTailIfNeeded(
 /**
  * completeWork也是针对不同fiber.tag调用不同的处理逻辑
  * 
- * 该方法主要针对Host类型fiber节点处理逻辑
- *  - mount下：更新wipFiber的stateNode(dom实例)，初始化新建的DOM状态和合成事件等
- *  - update下：wipFiber的updateQueue，其他类型没有特殊逻辑
+ * 该方法主要针对HostComponent类型fiber节点处理逻辑，HostRoot在更新时几乎没有逻辑
+ *  - mount下：更新wipFiber的stateNode(即Dom实例)，初始化新建的DOM状态和合成事件等，处理newprops到updateQueue中
+ *  - update下：更新wipFiber的updateQueue，其他类型没有特殊逻辑 -------- 最终updateQueue会在commit阶段消费渲染到页面上
  *  - 还会增加flags标记：Update和ref
+ * 
+ * - 细节
+ *    1. completeWork函数中: 对于HostRoot类型的节点, 仅初次构造时设置workInProgress.flags |= Snapshot
  * @param {*} current 
  * @param {*} workInProgress 
  * @param {*} renderLanes 

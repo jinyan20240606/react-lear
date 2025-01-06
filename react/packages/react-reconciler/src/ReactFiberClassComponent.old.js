@@ -190,12 +190,17 @@ export function applyDerivedStateFromProps(
   }
 }
 
+/**
+ * fiber初次构造后，beginWork阶段中 class类型组件初始化完成后 this.updater 对象如下：
+ */
 const classComponentUpdater = {
   isMounted,
   enqueueSetState(inst, payload, callback) {
+    // 1. 获取class实例对应的fiber节点
     const fiber = getInstance(inst);
+     // 2. 创建update对象
     const eventTime = requestEventTime();
-    const lane = requestUpdateLane(fiber);
+    const lane = requestUpdateLane(fiber);// 确定当前update对象的优先级
 
     const update = createUpdate(eventTime, lane);
     update.payload = payload;
@@ -205,9 +210,10 @@ const classComponentUpdater = {
       }
       update.callback = callback;
     }
-
+    // 3. 将update对象添加到当前Fiber节点的updateQueue队列当中
     enqueueUpdate(fiber, update);
-    scheduleUpdateOnFiber(fiber, lane, eventTime);
+    // 4. 调度更新：进入reconciler运作流程中的`输入`环节
+    scheduleUpdateOnFiber(fiber, lane, eventTime);// 传入的lane是update优先级
 
     if (__DEV__) {
       if (enableDebugTracing) {
@@ -804,6 +810,9 @@ function callComponentWillReceiveProps(
 }
 
 // Invokes the mount life-cycles on a previously never rendered instance.
+/**
+ * 执行钩子和相关fiber状态维护
+ */
 function mountClassInstance(
   workInProgress: Fiber,
   ctor: any,
@@ -1028,6 +1037,15 @@ function resumeMountClassInstance(
 }
 
 // Invokes the update life-cycles and returns false if it shouldn't rerender.
+/**
+ * 类组件update时的状态逻辑：主要是调用生命周期钩子 和 维护fiber节点上的状态管理
+ * 
+ * 0. 更新前的一些钩子调用 和fiber相关状态维护如processUpdateQueue等方法调用
+ * 1. 检查是否可以跳过更新，可以的话就设置wip fiber 的flags，return false
+ * 2. 不能跳过：就继续执行更新相关的钩子 和 维护fiber上的状态
+ * 
+ * @returns 返回 shouldUpdate 钩子的结果值
+ */
 function updateClassInstance(
   current: Fiber,
   workInProgress: Fiber,
@@ -1035,10 +1053,13 @@ function updateClassInstance(
   newProps: any,
   renderLanes: Lanes,
 ): boolean {
+  // 获取实例
   const instance = workInProgress.stateNode;
 
+  // 克隆更新队列
   cloneUpdateQueue(current, workInProgress);
 
+  // props处理
   const unresolvedOldProps = workInProgress.memoizedProps;
   const oldProps =
     workInProgress.type === workInProgress.elementType
@@ -1047,6 +1068,7 @@ function updateClassInstance(
   instance.props = oldProps;
   const unresolvedNewProps = workInProgress.pendingProps;
 
+  // 类组件的Context处理：[用法](https://juejin.cn/post/6924506511511126029#heading-3)
   const oldContext = instance.context;
   const contextType = ctor.contextType;
   let nextContext = emptyContextObject;
@@ -1057,6 +1079,9 @@ function updateClassInstance(
     nextContext = getMaskedContext(workInProgress, nextUnmaskedContext);
   }
 
+  // 生命周期方法调用
+  // 检查新生命周期方法:getDerivedStateFromProps
+  // 若不存在新钩子就调用 componentWillReceiveProps：如果组件没有使用新生命周期方法且属性或上下文发生变化，则调用 componentWillReceiveProps
   const getDerivedStateFromProps = ctor.getDerivedStateFromProps;
   const hasNewLifecycles =
     typeof getDerivedStateFromProps === 'function' ||
@@ -1086,6 +1111,7 @@ function updateClassInstance(
     }
   }
 
+  // 状态更新
   resetHasForceUpdateBeforeProcessing();
 
   const oldState = workInProgress.memoizedState;
@@ -1093,6 +1119,7 @@ function updateClassInstance(
   processUpdateQueue(workInProgress, newProps, instance, renderLanes);
   newState = workInProgress.memoizedState;
 
+  // 检查是否可以跳过更新，可以的话就设置flags，return false
   if (
     unresolvedOldProps === unresolvedNewProps &&
     oldState === newState &&
@@ -1119,7 +1146,8 @@ function updateClassInstance(
     }
     return false;
   }
-
+  // 不能跳过
+  // 处理 getDerivedStateFromProps
   if (typeof getDerivedStateFromProps === 'function') {
     applyDerivedStateFromProps(
       workInProgress,
@@ -1130,6 +1158,7 @@ function updateClassInstance(
     newState = workInProgress.memoizedState;
   }
 
+  // 决定是否更新：调用ShouldComponentUpdate钩子
   const shouldUpdate =
     checkHasForceUpdateAfterProcessing() ||
     checkShouldComponentUpdate(
@@ -1143,8 +1172,7 @@ function updateClassInstance(
     );
 
   if (shouldUpdate) {
-    // In order to support react-lifecycles-compat polyfilled components,
-    // Unsafe lifecycles should not be invoked for components using the new APIs.
+    // 调用 componentWillUpdate：如果组件没有使用新生命周期方法且决定更新，则调用 componentWillUpdate
     if (
       !hasNewLifecycles &&
       (typeof instance.UNSAFE_componentWillUpdate === 'function' ||
@@ -1157,13 +1185,16 @@ function updateClassInstance(
         instance.UNSAFE_componentWillUpdate(newProps, newState, nextContext);
       }
     }
+    // 如果组件定义了 componentDidUpdate 或 getSnapshotBeforeUpdate 方法，则设置相应的标记
     if (typeof instance.componentDidUpdate === 'function') {
       workInProgress.flags |= Update;
     }
     if (typeof instance.getSnapshotBeforeUpdate === 'function') {
       workInProgress.flags |= Snapshot;
     }
-  } else {
+  }
+  // 即使shouldUpdate结果不更新，也要根据 memoizedProps 和 memoizedState变化的话，设置相应标记， 以确保工作中的节点是最新的
+  else {
     // If an update was already in progress, we should schedule an Update
     // effect even though we're bailing out, so that cWU/cDU are called.
     if (typeof instance.componentDidUpdate === 'function') {
@@ -1191,6 +1222,7 @@ function updateClassInstance(
 
   // Update the existing instance's state, props, and context pointers even
   // if shouldComponentUpdate returns false.
+  // 更新实例属性
   instance.props = newProps;
   instance.state = newState;
   instance.context = nextContext;

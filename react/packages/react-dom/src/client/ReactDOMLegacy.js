@@ -242,12 +242,12 @@ function legacyRenderSubtreeIntoContainer(
         originalCallback.call(instance);
       };
     }
-    // 临时更改执行上下文：确保初始挂载不在批处理中进行
+    // 临时更改执行上下文为非批量更新上下文：确保初始挂载可以立即渲染，不进行调度
     unbatchedUpdates(() => {
       // 核心方法：更新容器中内容
       updateContainer(children, fiberRoot, parentComponent, callback);
     });
-  } 
+  }
   // update：更新
   else {
     // 获取现有的 Fiber 根节点

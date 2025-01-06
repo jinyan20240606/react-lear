@@ -26,8 +26,9 @@
     - ReactElement树驱动fiber树, fiber树再驱动DOM树, 最后展现到页面上，
 2. fiber根节点结构：从ReactDOM.render开始
     - fiberRoot：一个 React 根实例的内部表示，管理整个应用的根节点，包括初始化、更新和生命周期管理，有current属性，被赋予于container容器dom的一个私有属性
-      - 不是fiber节点类型对象
-      - 更新时双缓存树就用这个current属性来切换
+      - **双缓存体系中缓存树最顶端只有一个fiberRoot**（而且不是fiber节点类型对象）
+        - 缓存树是从hostRootFIber开始的，rootFiber.parent为空，fiber意义上的父节点为空，向上只有个单独的current链接
+      - 下一端用current链接，current来切换缓存的2个树，更新时双缓存树就用这个current属性来切换
     - rootFiber：上面current值。fiberRoot 中的一个 Fiber 节点，表示 React 应用的根节点，作为整个 Fiber 树的起点
       - 也叫HostRoot 类型组件
     ```js
@@ -67,6 +68,10 @@
 9. Hooks中
   - schedulePassiveEffects是填充Passsive全局数组，flushPassiveEffects是触发全局数组里存的副作用调度执行
   - 执行effect.destroy()的地方有两个:1.组件销毁时commitDeletion中commitUnmount中, 执行effect.destroy()；2. flushPassiveEffects中
+10. fiber树构造
+  - 对比更新时：进入工作循环即beginWork前
+      - 双缓存结构的workInProgress fiber节点树进行初始化为除了rootFiber是复制的新节点，其余child的fiber树是直接与current.child是共用的
+          - 详见[章节](#markupdatelanefromfibertoroot) 的`renderRootSync源码`部分
 
 ### mode与优先级和通道lanes概念
 
@@ -273,6 +278,8 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
 
 主要发生在react/packages/react-reconciler/src/ReactFiberReconciler.old.js-updateContainer函数里
 
+```js
+
 0-触发状态更新（根据场景调用不同方法）
     |
     |
@@ -281,8 +288,10 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
     |
     |
     v
-2-从fiber到root ---- 在调度更新函数中执行的（`markUpdateLaneFromFiberToRoot`）
-    |找到rootFiber
+2-从fiber到root ---- 在调度更新函数(scheduleUpdateOnFiber)中执行的（`markUpdateLaneFromFiberToRoot`）
+    |这个fiber是当前页面上的即current fiber节点开始向上追溯
+    |向上找到rootFiber，沿途标记更新通道childLanes，并更新对应的alternate上
+    |   - 这个childLanes会在beginWork的bailoutOnAlreadyFinishedWork优化方法中会用到：用来判断当前fiber的子节点的有没有更新，若没有更新可以直接复用      
     |
     v
 3-调度更新（`ensureRootIsScheduled`）
@@ -299,6 +308,8 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
     v
 3-2-commit阶段（`commitRoot`）
     |
+
+```
 
 - Update对象：Update对象组成UpdateQueue链表，
 - UpdateQueue结构
@@ -390,7 +401,191 @@ export type Fiber = {|
 
 - 优先级字段是Update对象的lane字段
 
-### API入手
+### fiber树构造
+
+参考博客：https://7km.top/main/fibertree-update
+
+参考下面章节：[ReactDOM.render流程](#reactdomrender流程)
+
+#### 整体数据结构变化
+
+![fiber树启动时的fiber关系图](./imgs/fiber树启动阶段结构图解.png)
+
+按照上面图解知：
+
+**启动阶段**：
+1. 初次构造启动时，页面上只有div#root的容器dom，且children为空
+2. 执行入口渲染方法，且在调用updateContainer之前，内存中创建fiberRoot 对象，并赋值给`div#root._reactRootContainer._internalRoot`与页面容器dom进行了关联。
+    - 同时fiberRoot直接初始化current属性为HostRootFiber:A 节点（作为fiber树的根节点） ---> ***此时页面容器dom里上还是空的***
+
+**render阶段**：
+1. scheduleUpdateOnFiber-performSyncWorkOnRoot-renderRootSync中
+2. prepareFreshStack方法中：会创建HostRootFiber:B 双缓存树的副本节点B，在容器DOM中的存在形式为`HostRootFiber:A.alternate = HostRootFiber:B`
+3. 构造循环workLoopSync方法中：后续组件树-fiber树的构造都是在HostRootFiber:B上进行，在render阶段beginWork+completeWork后完整的fiber树构建完了
+    - 构造完后还会将这个rooFiber:B树会赋值给`fiberRoot.finishedWork`
+
+**commit阶段**
+1. 最终commitRoot-commitMutationEffects阶段方法中：操作完DOM后 ---> ***此时页面容器dom有内容了***
+    - 有内容后同时改变指针：将`fiberRoot.current`指针指向`fiberRoot.finishedWork`：此时HostRootFiber:B代表页面上的树，HostRootFiber:A代表fiber备用缓存的树
+    - 此时也形成了页面和内存同时存在的双缓存fiber树，便于后面diff对比时使用两者
+2. 后面update更新时：在`fiberRoot.current.alternate:HostRootFiber:A`上进行构造新fiber树,然后对应地再current指向A，再然后B上构造新树current指向B，... B->A,A->B 这样相互交替达到双缓存更新的效果
+
+#### 初次构造
+
+> 重点关注图解结构方面：https://7km.top/main/fibertree-create
+
+#### 对比更新
+
+参考博客：https://7km.top/main/fibertree-update
+
+本节讨论对比更新这种情况(在Legacy模式下进行分析). 在阅读本节之前, 最好对fiber 树构造(初次创建)有一些了解, 其中有很多相似逻辑不再重复叙述, 本节重点突出对比更新与初次创建的不同之处
+
+测试代码为：react-test/src/testClassUpdate.jsx
+
+
+
+##### 更新入口
+
+如要主动发起更新, 有 3 种常见方式-- 3种方式具体对比介绍见[章节锚点or博客链接](#状态更新API入手):
+- Class组件中调用setState.
+- Function组件中调用hook对象暴露出的dispatchAction.
+- 在container节点上重复调用render(官网示例)
+  ```js
+  import ReactDOM from 'react-dom';
+  function tick() {
+    const element = (
+      <div>
+        <h1>Hello, world!</h1>
+        <h2>It is {new Date().toLocaleTimeString()}.</h2>
+      </div>
+    );
+    ReactDOM.render(element, document.getElementById('root'));
+  }
+  setInterval(tick, 1000);
+  // 对于重复render, 在React 应用的启动过程中已有说明, 调用路径包含updateContainer-->scheduleUpdateOnFiber
+  ```
+
+故无论从哪个入口进行更新, 最终都会进入scheduleUpdateOnFiber 调度更新, 再次证明scheduleUpdateOnFiber是输入阶段的必经函数(参考reconciler 运作流程).
+
+- **状态更新时触发调度更新的fiber传参：应该都是current即页面上的 当前fiber节点**
+
+##### 更新的构造阶段
+
+逻辑来到 scheduleUpdateOnFiber 函数逻辑
+代码定义：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@scheduleUpdateOnFiber
+
+**scheduleUpdateOnFiber相关逻辑链路理解**
+
+可参考图解https://7km.top/main/fibertree-update#markupdatelanefromfibertoroot
+
+1. 状态更新触发调度更新后，先执行其逻辑中的markUpdateLaneFromFiberToRoot，从current级别当前fiber节点向上至rootFiber及对应alternate都标记更新lanes
+  - 此时双缓存的workInProgress树目前还只是一个空的rootFiber节点没有children，这一步只是给当前都加上lanes了
+2. ensureRootIsScheduled(performSyncWorkOnRoot)：根据上下文发起调度更新：
+  - 调度更新开始执行刷新栈帧：这时会设置双缓存树即workInProgress子树为current的child：与current的child公有同一份child,并重置workInProgress的一些flags和effects链表等关键属性
+
+###### markUpdateLaneFromFiberToRoot
+
+图解见 https://7km.top/main/fibertree-update#markupdatelanefromfibertoroot
+
+函数主要任务：
+
+1. 以sourceFiber就是传入的current级别的fiber为起点, 设置起点的fiber.lanes
+2. 从起点开始, 直到HostRootFiber, 设置父路径上所有节点(也包括fiber.alternate)的fiber.childLanes.
+3. 通过设置fiber.lanes和fiber.childLanes就可以辅助判断子树是否需要更新(在下文循环构造中详细说明)
+
+**初次构造与对比更新的不同点**
+
+1. markUpdateLaneFromFiberToRoot函数, 只在对比更新阶段才发挥出它的作用, 它找出了fiber树中受到本次update影响的所有节点, 并设置这些节点的fiber.lanes或fiber.childLanes(在legacy模式下为SyncLane)以备fiber树构造阶段使用
+2. 对比更新没有直接调用performSyncWorkOnRoot, 而是通过调度中心来处理, 由于本示例是在Legacy模式下进行, 最后会同步执行performSyncWorkOnRoot.(详细原理可以参考React 调度原理(scheduler)). 所以其调用链路performSyncWorkOnRoot--->renderRootSync--->workLoopSync与初次构造中的一致.
+3. renderRootSync源码中：进入循环构造(workLoopSync)前, 会刷新栈帧(调用prepareFreshStack)(参考fiber 树构造(基础准备)中栈帧管理).
+    - fiberRoot.current指向与当前页面对应的fiber树, workInProgress指向正在构造的fiber树.
+    - 刷新栈帧prepareFreshStack：刷新栈帧会调用createWorkInProgress(), 使得workInProgress.flags和workInProgress.effects都已经被重置. 且workInProgress.child = current.child. 所以在进入循环构造之前, HostRootFiber与HostRootFiber.alternate共用一个child(这里是fiber(<App/>)).
+        - **共用一个child原因**：是默认child没有更新可以完全复用，后面如果有更新的话再单独clone或新建fiber节点到wip的树上
+            - clone时，是clone当前fiber节点，克隆后的子fiber节点并没有克隆，还是链接的current级别的
+        - 图解结构见https://7km.top/main/fibertree-update#markupdatelanefromfibertoroot
+
+###### 工作循环构造
+
+整个fiber树构造是一个深度优先遍历(可参考React 算法之深度优先遍历), 其中有 2 个重要的变量workInProgress和current(可参考fiber 树构造(基础准备)中介绍的双缓冲技术)
+
+- workInProgress和current都视为指针
+- workInProgress指向当前正在构造的fiber节点
+- current = workInProgress.alternate(即fiber.alternate), 指向当前页面正在使用的fiber节点.
+
+1. 在深度优先遍历中, 每个fiber节点都会经历 2 个阶段:
+  - 探寻阶段 beginWork
+  - 回溯阶段 completeWork
+这 2 个阶段共同完成了每一个fiber节点的创建(或更新), 所有fiber节点则构成了fiber树
+
+2. 接下来主要分享 workLoopSync 方法逻辑
+代码见：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@workLoopSync
+```js
+/**
+ * 从workInProgress起从上到下循环执行 performUnitOfWork
+ * 
+ * @param workInProgress 全局变量 wip的rootFiber 缓存根节点，不管mount还是update都是从根节点开始向下遍历
+ */
+function workLoopSync() {
+  // 判断workInProgress值，从rootFiber内存fiber节点开始，不断赋值workInProgress变量， 一直向下深度优先遍历
+  while (workInProgress !== null) {
+    performUnitOfWork(workInProgress);
+  }
+}
+// ... 省略部分无关代码
+function performUnitOfWork(unitOfWork: Fiber): void {
+  // unitOfWork就是被传入的workInProgress，不管mount还是update，第一次的值都是rootFiber的副本节点，自顶向下递归处理
+  // 在对比更新过程中current = unitOfWork.alternate;不为null, 后续的调用逻辑中会大量使用此处传入的current
+  const current = unitOfWork.alternate;
+  let next;
+  next = beginWork(current, unitOfWork, subtreeRenderLanes);
+  unitOfWork.memoizedProps = unitOfWork.pendingProps;
+  if (next === null) {
+    // 如果没有派生出新的节点, 则进入completeWork阶段, 传入的是当前unitOfWork
+    completeUnitOfWork(unitOfWork);
+  } else {
+    workInProgress = next;
+  }
+}
+```
+
+###### 探寻阶段 beginWork
+
+代码见：react/packages/react-reconciler/src/ReactFiberBeginWork.old.js@beginWork
+
+**1. bailoutOnAlreadyFinishedWork逻辑**
+  - 全局搜索`function bailoutOnAlreadyFinishedWork(`查看逻辑和注释
+  - bailout用于判断子树节点是否完全复用, 如果可以复用, 则会略过 fiber 树构造
+
+**2. updateXXX函数**
+  - updateXXX函数(如: updateHostRoot, updateClassComponent 等)的主干逻辑与初次构造过程完全一致, 总的目的是为了向下生成子节点, 并在这个过程中调用reconcileChildren调和函数, 只要fiber节点有副作用, 就会把特殊操作设置到fiber.flags(如:节点ref,class组件的生命周期,function组件的hook,节点删除等).
+
+**3. 对比更新过程的不同之处:**
+  - bailoutOnAlreadyFinishedWork
+    对比更新时如果遇到当前节点无需更新(如: class类型的节点且shouldComponentUpdate返回false), 会再次进入bailout逻辑.
+  - reconcileChildren调和函数：调和函数是updateXXX函数中的一项重要逻辑, 它的作用是向下生成子节点, 并设置fiber.flags.
+    初次创建时fiber节点没有比较对象, 所以在向下生成子节点的时候没有任何多余的逻辑, 只管创建就行.
+    对比更新时需要把ReactElement对象与旧fiber对象进行比较, 来判断是否需要复用旧fiber对象
+  - 调和函数目的:
+    - 给新增,移动,和删除节点设置fiber.flags(新增,移动: Placement, 删除: Deletion)
+    - 如果是需要删除的fiber, 除了自身打上Deletion之外, 还要将其添加到父节点的effects链表中(正常副作用队列的处理是在completeWork函数, 但是该节点(被删除)会脱离fiber树, 不会再进入completeWork阶段, 所以在beginWork阶段提前加入副作用队列).
+
+
+###### 回溯阶段 completeWork
+
+completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新逻辑一致,
+都是处理beginWork 阶段已经创建出来的 fiber 节点, 最后创建(更新)DOM 对象, 并上移副作用队列
+
+##### 图解理解
+
+见https://7km.top/main/fibertree-update
+
+最后 complete一直向上归到hostRootFiber节点时其parent节点为空，到此整个fiber树构造循环(对比更新)已经执行完毕, 拥有一棵新的fiber树, 并且在fiber树的根节点上挂载了副作用队列. renderRootSync函数退出之前, 会重置workInProgressRoot = null, 表明没有正在进行中的render. 且把最新的fiber树挂载到fiberRoot.finishedWork上. 这时整个 fiber 树的内存结构如下(注意fiberRoot.finishedWork和fiberRoot.current指针,在commitRoot阶段会进行处理)
+
+##### 总结
+
+本节演示了更新阶段fiber树构造(对比更新)的全部过程, 跟踪了创建过程中内存引用的变化情况. 与初次构造最大的不同在于fiber节点是否可以复用, 其中bailout逻辑是fiber子树能否复用的判断依据
+      
+### 状态更新API入手
 
 #### ReactDOM.render流程
 
@@ -399,8 +594,8 @@ export type Fiber = {|
 **大体流程**
 1. 创建fiberRootNode和rootFiber和初始化UpdateQueue ====== 后面都主要发生在react/packages/react-reconciler/src/ReactFiberReconciler.old.js updateContainer函数里
 2. 创建Update对象，并赋值给rootFiber.updateQueue,来触发一次更新
-3. 从fiber到root  --- 在调度更新函数中执行的
-4. 调度更新
+3. 从fiber到root  --- 在调度更新函数：scheduleUpdateOnFiber中执行的
+4. 调度更新：scheduleUpdateOnFiber
 5. render阶段
 6. commit阶段
 
@@ -409,25 +604,31 @@ export type Fiber = {|
 2. render方法定义路径：react/packages/react-dom/src/client/ReactDOMLegacy.js
   1. 调用legacyRenderSubtreeIntoContainer 为render的1级核心方法
   2. 先legacyCreateRootFromDOMContainer初始化fiberRoot应用根节点
-  3. 再调用协调器的updateContainer 为render的2级核心方法,该方法任何render相关的API最终都会调用它
-      - 内部调用`performSyncWorkOnRoot`,执行下面2阶段:react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:1074
+      - mount阶段下更改执行上下文为非批量更新执行上下文，确保mount初始挂载可以立即更新，不调度
+      消费这个上下文是在后面的 scheduleUpdateOnFiber 中判断执行
+  3. 再调用协调器的 updateContainer----> scheduleUpdateOnFiber调度更新 为render的2级核心方法,该方法任何render相关的API最终都会调用它
+      - 先从fiber到root沿途标记lanes
+      - 后调用`performSyncWorkOnRoot`,执行下面2阶段:react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:1074
   4. [render阶段]: 执行工作循环单元：`performUnitOfWork`：performUnitOfWork react方法：/packages/react-reconciler/src/ReactFiberWorkLoop.old.js
       - beginWork：定义react/packages/react-reconciler/src/ReactFiberBeginWork.old.js：核心是reconcileChildren方法
-        - 根据 ReactElement对象创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
+        - 根据 ReactElement对象即nextChildren(调用组件渲染方法的结果)创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
         - 设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
             - 单元素diff时：会把新单节点统一添加flags为Update，旧节点：添加flags为Deletion,并旧节点添加到returnFiber的effectList链表里
+                - Deletion的细节：正常副作用队列的处理是在completeWork函数, 但是该节点(被删除)会脱离fiber树, 不会再进入completeWork阶段, 所以在beginWork阶段提前加到父节点的副作用队列中
             - 多元素diff时：会在[placeChild方法](react/packages/react-reconciler/src/ReactChildFiber.old.js)添加插入flags
         - 设置fiber.stateNode局部状态(如Class类型节点: fiber.stateNode=new Class())
       - completeWork：定义在react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js 的completeUnitOfWork方法
         - 该方法主要针对Host类型fiber节点处理逻辑，更新dom，updateQueue和事件，其他类型没有特殊逻辑
         - 添加一些flags标记：
             - 类组件，函数组件fiber节点一般不做任何逻辑处理
-            - HostRoot：添加flags为snapshot 快照标记，和ref标记
+            - HostRoot：mount阶段：添加flags为snapshot 快照标记，和ref标记，update阶段：几乎没有逻辑
             - HostComponent：主要添加flags为Update标记 和ref标记，更新updateQueue为数组
         - 最终会追加effectList链表到根节点
+        - 细节
+            1. completeWork函数中: 对于HostRoot类型的节点, 仅初次构造时给HostRoot设置workInProgress.flags |= Snapshot,该标记在commitBeforeMutationEffects阶段处理
       - 这块需要实际例子，整体串联图解下：见 [链接](https://7km.top/main/fibertree-create)
         - performUnitOfWork执行完后，得到了完整的fiber树和DOM树(DOM树在最近一个HostComponent的stateNodeDOM实例里)，在fiber树的根节点上挂载了一串effectList副作用队列
-    5. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:2090
+    5. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitRoot
 3. 核心逻辑：updateContainer方法定义路径：react/packages/react-reconciler/src/ReactFiberReconciler.old.js
 
 ##### mount阶段
@@ -495,12 +696,44 @@ const rootFiberNode = {
 ```
 
 #### this.setState
+
+> packages/react/src/ReactBaseClasses.js#L57-L66
+
 1. this.setState内会调用this.updater.enqueueSetState
-2. 方法内部：创建Update对象，并赋值给rootFiber.updateQueue,来触发一次更新
+    - 代码定义：react/packages/react-reconciler/src/ReactFiberClassComponent.old.js@classComponentUpdater
+2. 方法内部：创建Update对象，并赋值给当前节点的updateQueue,来触发调度更新函数 scheduleUpdateOnFiber
 3. 从fiber到root
 4. 调度更新
 5. render阶段
 6. commit阶段
+
+#### 函数组件的dispatchAction
+
+在function类型组件中, 如果使用hook(useState), 则可以通过hook api暴露出的dispatchAction(源码链接)来更新
+
+代码定义：react/packages/react-reconciler/src/ReactFiberHooks.old.js@dispatchAction
+
+该方法中也是先创建Update对象，然后发起调度更新scheduleUpdateOnFiber
+
+### 其他API入手
+
+#### getSnapshotBeforeUpdate
+
+> getSnapshotBeforeUpdate 钩子的全链路梳理：详见https://juejin.cn/post/7221413753731874875#heading-3
+
+snap(快照)标记并不只是用来处理getSnapshotBeforeUpdate钩子，如下面的HostRoot类型节点的snap标记
+
+- 这个钩子源码中是否执行取决于 当前fiber节点上是否有snap标记
+    - fiber类型：与Snapshot标记相关的类型只有ClassComponent和HostRoot.
+- snap标记的定义处：
+    - update阶段：render阶段的beginWork中的updateClassComponent方法中shouldUpdate 的值为 true且用户实例定义了钩子函数后，就会设上snap标记
+    - mount阶段：仅在completeWork中对于HostRoot类型节点中增加snap标记
+        - 其他类型节点在mount中不会打snap标记即mount阶段钩子不会被调用
+- snap标记消费处即含钩子调用处
+    - react 会在 commit阶段的beforeMutation阶段的commitBeforeMutationEffectOnFiber--commitBeforeMutationLifeCycles来消费该标记
+    - 从源码中可以看到, 与Snapshot标记相关的类型只有ClassComponent和HostRoot.
+    - 对于ClassComponent类型节点, 调用了instance.getSnapshotBeforeUpdate生命周期函数
+    - 对于HostRoot类型节点, 调用clearContainer清空了容器节点(即div#root这个 dom 节点)
 
 ### Hooks源码刨析
 
