@@ -413,18 +413,18 @@ export type Fiber = {|
 
 按照上面图解知：
 
-**启动阶段**：
+##### 启动阶段：
 1. 初次构造启动时，页面上只有div#root的容器dom，且children为空
 2. 执行入口渲染方法，且在调用updateContainer之前，内存中创建fiberRoot 对象，并赋值给`div#root._reactRootContainer._internalRoot`与页面容器dom进行了关联。
     - 同时fiberRoot直接初始化current属性为HostRootFiber:A 节点（作为fiber树的根节点） ---> ***此时页面容器dom里上还是空的***
 
-**render阶段**：
+##### render阶段：
 1. scheduleUpdateOnFiber-performSyncWorkOnRoot-renderRootSync中
 2. prepareFreshStack方法中：会创建HostRootFiber:B 双缓存树的副本节点B，在容器DOM中的存在形式为`HostRootFiber:A.alternate = HostRootFiber:B`
 3. 构造循环workLoopSync方法中：后续组件树-fiber树的构造都是在HostRootFiber:B上进行，在render阶段beginWork+completeWork后完整的fiber树构建完了
     - 构造完后还会将这个rooFiber:B树会赋值给`fiberRoot.finishedWork`
 
-**commit阶段**
+##### commit阶段
 1. 最终commitRoot-commitMutationEffects阶段方法中：操作完DOM后 ---> ***此时页面容器dom有内容了***
     - 有内容后同时改变指针：将`fiberRoot.current`指针指向`fiberRoot.finishedWork`：此时HostRootFiber:B代表页面上的树，HostRootFiber:A代表fiber备用缓存的树
     - 此时也形成了页面和内存同时存在的双缓存fiber树，便于后面diff对比时使用两者
