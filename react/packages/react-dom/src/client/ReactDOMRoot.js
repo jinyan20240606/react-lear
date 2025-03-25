@@ -65,13 +65,13 @@ function ReactDOMRoot(container: Container, options: void | RootOptions) {
 
 /**
  * 构造render实例对象（含_internalRoot：新建fiberRoot）
- * @param {*} container 目标DOM容器
+ * @param {*} container 目标DOM容器 div#root
  * @param {*} tag 标识根实例的类型。常见的标签值包括 LegacyRoot 和 ConcurrentRoot 
  * @param {*} options 配置
  * @returns {{render:Function, unmount:Function,_internalRoot: FiberRoot}} RootType
  */
 function ReactDOMBlockingRoot(
-  /** 目标DOM容器 */
+  /** 目标DOM容器 div#root */
   container: Container,
   /** 标识根实例的类型。常见的标签值包括 LegacyRoot 和 ConcurrentRoot */
   tag: RootTag,
@@ -132,7 +132,13 @@ ReactDOMRoot.prototype.unmount = ReactDOMBlockingRoot.prototype.unmount = functi
   });
 };
 
-/** 创建根实例：返回fiberRoot：整个React应用的根 */
+/** 
+ * 创建根实例：返回fiberRoot：整个React应用的根
+ * 1. 创建根实例
+ * 2. 处理react合成事件的委托绑定
+ * 
+ * @param {*} container 目标DOM容器，div#root 
+ * */
 function createRootImpl(
   container: Container,
   tag: RootTag,
@@ -157,7 +163,7 @@ function createRootImpl(
   // 获取容器节点类型
   const containerNodeType = container.nodeType;
 
-  // 3、处理DOM容器节点的事件监听
+  // 3、处理DOM容器节点的事件委托 --- 根容器的react合成事件委托
   if (enableEagerRootListeners) {
     const rootContainerElement =
       container.nodeType === COMMENT_NODE ? container.parentNode : container;

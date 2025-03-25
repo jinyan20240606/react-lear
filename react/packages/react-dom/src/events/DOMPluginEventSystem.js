@@ -92,9 +92,21 @@ ChangeEventPlugin.registerEvents();
 SelectEventPlugin.registerEvents();
 BeforeInputEventPlugin.registerEvents();
 
+/**
+ * 收集 fiber节点上的所有listener到dispatchQueue队列中
+ * - 在Plugin.extractEvents过程中, 从当前fiber节点向上遍历整个fiber树找到所有对应的domEventName的listener之后, 初始化SyntheticEvent合成事件的事件对象实例, 加入到dispatchQueue中, 等待派发
+ * - dispatchEvent函数的调用链路中, 通过不同的插件, 处理不同的事件. 其中最常见的事件都会由SimpleEventPlugin.extractEvents进行处理
+ *    - 简单事件插件
+ *    - EnterLeaveEventPlugin
+ *    - ChangeEventPlugin
+ *    - SelectEventPlugin
+ *    - BeforeInputEventPlugin
+ * @param {*} domEventName
+ */
 function extractEvents(
   dispatchQueue: DispatchQueue,
   domEventName: DOMEventName,
+  /** 一般情况下就是触发的目标DOM对应的fiber节点 */
   targetInst: null | Fiber,
   nativeEvent: AnyNativeEvent,
   nativeEventTarget: null | EventTarget,
@@ -116,6 +128,7 @@ function extractEvents(
     eventSystemFlags,
     targetContainer,
   );
+  // 是否处理某些polyfill事件插件，兼容旧浏览器或特定事件类型
   const shouldProcessPolyfillPlugins =
     (eventSystemFlags & SHOULD_NOT_PROCESS_POLYFILL_EVENT_PLUGINS) === 0;
   // We don't process these events unless we are in the
@@ -176,6 +189,9 @@ function extractEvents(
 }
 
 // List of events that need to be individually attached to media elements.
+/**
+ * 各种媒体事件，也是属于不冒泡的事件
+ */
 export const mediaEventTypes: Array<DOMEventName> = [
   'abort',
   'canplay',
@@ -202,16 +218,20 @@ export const mediaEventTypes: Array<DOMEventName> = [
   'waiting',
 ];
 
-// We should not delegate these events to the container, but rather
+// We should not delegate代理 these events to the container, but rather而是应该
 // set them on the actual target element itself. This is primarily
 // because these events do not consistently bubble in the DOM.
+/**
+ * 这些事件被直接设置在目标元素本身上，而不是委托给容器元素。
+ * 这是因为所列出的事件在 DOM 中可能不会一直地冒泡
+ */
 export const nonDelegatedEvents: Set<DOMEventName> = new Set([
-  'cancel',
-  'close',
-  'invalid',
-  'load',
-  'scroll',
-  'toggle',
+  'cancel',// 当一个表单的提交被取消时触发
+  'close',// 当 <dialog> 元素关闭时触发
+  'invalid', //当尝试提交表单时，如果存在一个或多个无效字段，则会在每个无效字段上触发
+  'load',// 当文档、图像或其他资源已完成加载时触发
+  'scroll',// 当文档视图或元素的内容滚动时触发
+  'toggle',// 当 <details> 元素的状态改变（打开或关闭）时触发
   // In order to reduce bytes, we insert the above array of media events
   // into this Set. Note: the "error" event isn't an exclusive media event,
   // and can occur on other elements too. Rather than duplicate that event,
@@ -230,6 +250,12 @@ function executeDispatch(
   event.currentTarget = null;
 }
 
+/**
+ * 按顺序执行事件监听器，根据事件阶段（捕获或冒泡）决定遍历监听器的顺序
+ * 
+ * 1. 如果处于捕获阶段（inCapturePhase = true），则逆序遍历 dispatchListeners（从后往前）。
+ * 2. 如果处于冒泡阶段（inCapturePhase = false），则正序遍历 dispatchListeners（从前往后）。
+ */
 function processDispatchQueueItemsInOrder(
   event: ReactSyntheticEvent,
   dispatchListeners: Array<DispatchListener>,
@@ -257,29 +283,50 @@ function processDispatchQueueItemsInOrder(
   }
 }
 
+/**
+ * 实际派发事件
+ * @param {*} dispatchQueue: 事件队列，包含待处理的事件对象和对应的监听器列表
+ * @param {*} eventSystemFlags 用于标识事件的当前阶段（如捕获阶段或冒泡阶段
+ */
 export function processDispatchQueue(
   dispatchQueue: DispatchQueue,
   eventSystemFlags: EventSystemFlags,
 ): void {
+  // 是否处于捕获阶段
   const inCapturePhase = (eventSystemFlags & IS_CAPTURE_PHASE) !== 0;
+  // 遍历队列中的每个事件-监听器对，调用 processDispatchQueueItemsInOrder 按顺序执行监听器
   for (let i = 0; i < dispatchQueue.length; i++) {
     const {event, listeners} = dispatchQueue[i];
     processDispatchQueueItemsInOrder(event, listeners, inCapturePhase);
     //  event system doesn't use pooling.
   }
+  // 处理完所有事件后，重新抛出之前捕获的错误（如果有的话）
   // This would be a good time to rethrow if any of the event handlers threw.
   rethrowCaughtError();
 }
 
+/**
+ * ## 实际派发事件给插件系统
+ * 1. extractEvents方法提取所有合成事件
+ *    - 在Plugin.extractEvents过程中, 遍历fiber树找到所有对应的domEventName的listener之后, 就会创建SyntheticEvent, 加入到dispatchQueue中, 等待派发.
+ * 2. 调用 processDispatchQueue 函数来实际执行上面提取的所有事件分发
+ * @param {*} domEventName 
+ * @param {*} eventSystemFlags 
+ * @param {*} nativeEvent 
+ * @param {*} targetInst 一般情况下就是触发的目标DOM对应的fiber节点
+ * @param {*} targetContainer 
+ */
 function dispatchEventsForPlugins(
   domEventName: DOMEventName,
   eventSystemFlags: EventSystemFlags,
   nativeEvent: AnyNativeEvent,
-  targetInst: null | Fiber,
+  targetInst: null | Fiber, // 一般情况下就是触发的目标DOM对应的fiber节点
   targetContainer: EventTarget,
 ): void {
   const nativeEventTarget = getEventTarget(nativeEvent);
+  // 1. 创建一个空数组 dispatchQueue，用来存储即将被分发的事件对象。这个队列将在稍后用于批量处理所有需要触发的事件
   const dispatchQueue: DispatchQueue = [];
+  // 2. extractEvents方法：targetInst目标节点向上遍历fiber树，提取fiber树上所有domEventName对应的listenr，并将它们添加到 dispatchQueue 中
   extractEvents(
     dispatchQueue,
     domEventName,
@@ -289,6 +336,7 @@ function dispatchEventsForPlugins(
     eventSystemFlags,
     targetContainer,
   );
+  // 3. 调用 processDispatchQueue 函数来实际执行事件分发
   processDispatchQueue(dispatchQueue, eventSystemFlags);
 }
 
@@ -320,11 +368,19 @@ const listeningMarker =
     .slice(2);
 
 /**
+ * 完成react的合成事件的总代理委托（16版本是在document上委托，17后在根dom容器）
+ * 
  * 在一个给定的根容器元素上监听所有支持的原生事件的重要部分
+ * 1. 节流优化, 保证全局注册只被调用一次.
+ * 2. 遍历allNativeEvents, 调用listenToNativeEvent监听冒泡和捕获阶段的事件.
+      - allNativeEvents包括了大量的原生事件名称, 它是在DOMPluginEventSystem.js中被初始化
+ * 
+ * @params {*} rootContainerElement 目标dom容器 div#root
  */
 export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
   if (enableEagerRootListeners) {
     // 是否已监听过，是则跳出
+    // 节流优化, 保证全局注册只被调用一次
     if ((rootContainerElement: any)[listeningMarker]) {
       // Performance optimization: don't iterate through events
       // for the same portal container or root node more than once.
@@ -334,19 +390,20 @@ export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
     }
     (rootContainerElement: any)[listeningMarker] = true;
     // 初始化时已全部添加好事件名字的set集合了
+    // 遍历allNativeEvents 监听冒泡和捕获阶段的事件
     allNativeEvents.forEach(domEventName => {
       // 包含不需要代理的事件名称的集合
       if (!nonDelegatedEvents.has(domEventName)) {
         listenToNativeEvent(
           domEventName,
-          false,
+          false,// 冒泡阶段监听
           ((rootContainerElement: any): Element),
           null,
         );
       }
       listenToNativeEvent(
         domEventName,
-        true,
+        true,// 捕获阶段监听
         ((rootContainerElement: any): Element),
         null,
       );
@@ -355,11 +412,11 @@ export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
 }
 
 /**
- * 目标元素上监听特定的原生事件
- * @param {*} domEventName 
+ * 目标元素上监听原生事件
+ * @param {*} domEventName 要注册的事件名
  * @param {*} isCapturePhaseListener 是否捕获阶段监听
- * @param {*} rootContainerElement  DOM 容器
- * @param {*} targetElement 目标元素默认为null
+ * @param {*} rootContainerElement  目标DOM 容器
+ * @param {*} targetElement 事件触发的实际目标元素，传null为走事件代理，不为null则注册到实际元素上
  * @param {*} eventSystemFlags 
  * @returns 
  */
@@ -372,7 +429,7 @@ export function listenToNativeEvent(
 ): void {
   let target = rootContainerElement;
 
-  // SelectionChange事件 需要附加到document中
+  // 1、判断SelectionChange事件 需要附加到document中
   // 否则它不会捕获因为是仅在docuemnt上触发的事件。
   if (
     domEventName === 'selectionchange' &&
@@ -384,7 +441,7 @@ export function listenToNativeEvent(
   // register it to the root container. Otherwise, we should
   // register the event to the target element and mark it as
   // a non-delegated event.
-  // 处理非代理事件
+  // 2、处理非代理事件 ---> 非代理事件需要直接注册到实际目标元素上即targetElement
   if (
     targetElement !== null &&
     !isCapturePhaseListener &&
@@ -411,7 +468,7 @@ export function listenToNativeEvent(
     eventSystemFlags |= IS_NON_DELEGATED;
     target = targetElement;
   }
-  // 获取事件监听器集合
+  // 3、获取dom关联的事件监听器集合
   const listenerSet = getEventListenerSet(target);
   const listenerSetKey = getListenerSetKey(
     domEventName,
@@ -419,11 +476,13 @@ export function listenToNativeEvent(
   );
   // If the listener entry is empty or we should upgrade, then
   // we need to trap an event listener onto the target.
-  // 添加事件监听器
+  // 4、注册事件到target，同时往集合里添加已注册的事件名，避免重复注册
+  // 利用set数据结构, 保证相同的事件类型只会被注册一次.
   if (!listenerSet.has(listenerSetKey)) {
     if (isCapturePhaseListener) {
       eventSystemFlags |= IS_CAPTURE_PHASE;
     }
+    // 4-1、注册事件监听
     addTrappedEventListener(
       target,
       domEventName,
@@ -488,7 +547,15 @@ export function listenToReactEvent(
   }
 }
 
-/** 在一个给定的目标容器上添加特定的原生事件监听器 */
+/** 
+ * 在目标DOM容器上注册原生事件监听器
+ * 1. 构造统一的listener
+ *    - 确定isPassiveListener变量：是否属于要passive监听事件
+ *    - 处理旧版facebook支持
+ * 2. 注册事件监听
+ *    - 根据是否冒泡类型和是否isPassiveListener来注册事件监听
+ *    - 调用addEventBubbleListener|addEventBubbleListenerWithPassiveFlag和addEventCaptureListener|addEventCaptureListenerWithPassiveFlag监听了原生事件
+ * */
 function addTrappedEventListener(
   targetContainer: EventTarget,
   domEventName: DOMEventName,
@@ -496,7 +563,7 @@ function addTrappedEventListener(
   isCapturePhaseListener: boolean,
   isDeferredListenerForLegacyFBSupport?: boolean,
 ) {
-  // 带有优先级的事件监听器包装
+  // 1. 构造listener
   let listener = createEventListenerWrapperWithPriority(
     targetContainer,
     domEventName,
@@ -504,7 +571,7 @@ function addTrappedEventListener(
   );
   // If passive option is not supported, then the event will be
   // active and not passive.
-  // 确定是否是被动监听器：告诉浏览器在处理某些特定类型的事件（如 touchstart 和 touchmove）时，不会阻止页面的默认行为。这种机制主要用于提高触摸设备上的滚动性能
+  // 1-1. 确定是否是被动监听器变量bool值：告诉浏览器在处理某些特定类型的事件（如 touchstart 和 touchmove）时，不会阻止页面的默认行为。这种机制主要用于提高触摸设备上的滚动性能
   let isPassiveListener = undefined;
   if (passiveBrowserEventsSupported) {
     // Browsers introduced an intervention, making these events
@@ -522,7 +589,7 @@ function addTrappedEventListener(
     }
   }
 
-  // 处理旧版 Facebook 支持:enableLegacyFBSupport 就是旧版facebook支持
+  // 1-2. 处理旧版 Facebook 支持:enableLegacyFBSupport 就是旧版facebook支持
   targetContainer =
     enableLegacyFBSupport && isDeferredListenerForLegacyFBSupport
       ? (targetContainer: any).ownerDocument
@@ -552,7 +619,9 @@ function addTrappedEventListener(
       return originalListener.apply(this, p);
     };
   }
+
   // 如果没有启用延迟，则添加事件监听器
+  // 2. 注册事件监听
   if (isCapturePhaseListener) {// 捕获阶段
     if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventCaptureListenerWithPassiveFlag(
@@ -614,14 +683,30 @@ function isMatchingRootContainer(
   );
 }
 
+/**
+ * 入口：派发事件给插件系统:
+ * 1. 基于当前触发的目标fiber节点-初始化赋值 ancestorInst 变量
+ *    - 若当前节点是HostRoot或HostPortal时，---> 处理下跨根的边界情况
+ *        - HostRoot时：正好对应targetContainer目标容器，则不处理
+ *            - 若不对应即跨根：找最近祖先元素的fiber实例，赋值给ancestorInst变量
+ *        - HostPortal时：处理portal事件传播的跨根问题
+ *    - 否则其他普通节点时，ancestorInst 变量不改变：还是当前触发的目标fiber节点
+ * 2. 传参ancestorInst值，调用 dispatchEventsForPlugins 函数来真正分发事件给插件系统，完成事件处理过程
+ * @param {*} nativeEvent 原生事件对象event
+ * @param {*} targetInst event.target-dom节点对应的Fiber节点实例
+ * @param {*} targetContainer 目标容器
+ * @returns
+ */
 export function dispatchEventForPluginEventSystem(
-  domEventName: DOMEventName,
-  eventSystemFlags: EventSystemFlags,
-  nativeEvent: AnyNativeEvent,
-  targetInst: null | Fiber,
-  targetContainer: EventTarget,
+  domEventName: DOMEventName,// 原生 DOM 事件的名称，例如 click、keydown 等。
+  eventSystemFlags: EventSystemFlags,// 事件系统的标志位，用于表示事件的一些特性，如是否是捕获阶段、是否是非委托事件等
+  nativeEvent: AnyNativeEvent,// 原生浏览器事件对象。
+  targetInst: null | Fiber,// 事件触发的目标 Fiber 节点实例
+  targetContainer: EventTarget,// 目标容器，通常是 React 根节点或 Portal 节点对应的 DOM 元素
 ): void {
   let ancestorInst = targetInst;
+  // 如果不是非管理节点且非委托事件
+  debugger;
   if (
     (eventSystemFlags & IS_EVENT_HANDLE_NON_MANAGED_NODE) === 0 &&
     (eventSystemFlags & IS_NON_DELEGATED) === 0
@@ -631,6 +716,7 @@ export function dispatchEventForPluginEventSystem(
     // If we are using the legacy FB support flag, we
     // defer the event to the null with a one
     // time event listener so we can defer the event.
+    // 处理 Facebook 遗留支持模式
     if (
       enableLegacyFBSupport &&
       // If our event flags match the required flags for entering
@@ -644,7 +730,11 @@ export function dispatchEventForPluginEventSystem(
       deferClickToDocumentForLegacyFBSupport(domEventName, targetContainer);
       return;
     }
+    // 查找正确的祖先 Fiber
+    // 主循环遍历 Fiber 树，寻找与当前 targetContainer 匹配的根边界（Root 或 Portal）
     if (targetInst !== null) {
+      // 如果 targetInst 不为空，则进入主循环，尝试找到正确的祖先 Fiber 实例
+
       // The below logic attempts to work out if we need to change
       // the target fiber to a different ancestor. We had similar logic
       // in the legacy event system, except the big difference between
@@ -657,7 +747,6 @@ export function dispatchEventForPluginEventSystem(
       // If we find that "rootContainer", we find the parent fiber
       // sub-tree for that root and make that our ancestor instance.
       let node = targetInst;
-
       mainLoop: while (true) {
         if (node === null) {
           return;
@@ -668,16 +757,21 @@ export function dispatchEventForPluginEventSystem(
           if (isMatchingRootContainer(container, targetContainerNode)) {
             break;
           }
+          // Portal的跨根问题：目标是 Portal，但容器不匹配：
+          // 当前遍历到的 Fiber 节点是 HostPortal 类型，但其对应的容器（containerInfo）与 targetContainer（目标根容器）不匹配。
+          // 例如：Portal 的宿主容器是 #modal，而 targetContainer 是 #app，说明该 Portal 属于其他根。
           if (nodeTag === HostPortal) {
             // The target is a portal, but it's not the rootContainer we're looking for.
             // Normally portals handle their own events all the way down to the root.
             // So we should be able to stop now. However, we don't know if this portal
             // was part of *our* root.
             let grandNode = node.return;
-            while (grandNode !== null) {
+            while (grandNode !== null) {// 向上遍历父节点
               const grandTag = grandNode.tag;
               if (grandTag === HostRoot || grandTag === HostPortal) {
                 const grandContainer = grandNode.stateNode.containerInfo;
+                // 找到匹配的根容器，说明该 Portal 属于当前根
+                // 因此无需调整，直接return
                 if (
                   isMatchingRootContainer(grandContainer, targetContainerNode)
                 ) {
@@ -695,7 +789,9 @@ export function dispatchEventForPluginEventSystem(
           // need to validate that the fiber is a host instance, otherwise
           // we need to traverse up through the DOM till we find the correct
           // node that is from the other tree.
+          // 当没找到HostRoot和HostPortal合适的根，我们需要向上遍历DOM，找到对应的宿主Fiber节点。
           while (container !== null) {
+            // 找container-DOM对应的向上找最近的fiber节点
             const parentNode = getClosestInstanceFromNode(container);
             if (parentNode === null) {
               return;
@@ -714,6 +810,7 @@ export function dispatchEventForPluginEventSystem(
   }
 
   batchedEventUpdates(() =>
+    // 调用 dispatchEventsForPlugins 函数来真正分发事件给插件系统，完成事件处理过程
     dispatchEventsForPlugins(
       domEventName,
       eventSystemFlags,
@@ -736,6 +833,22 @@ function createDispatchListener(
   };
 }
 
+/**
+ * 从targetFiber开始, 向上遍历, 直到 root 为止, 收集所有的 listener到listeners数组中
+ * - 遍历时每轮收集过程
+ *    1. 只处理宿主组件节点：当节点类型是HostComponent时(如: div, span, button等类型
+ *      - 实验性功能的事件类型：通过 createEventHandle API 定义的事件（React 实验性功能）：用getEventHandlerListeners获取到数组遍历push进listeners
+ *      - react事件类型：getListener获取单项值push
+ *    2. 额外处理作用域组件实验性功能：处理通过 useScope 创建的作用域组件
+ * 
+ * 如果只收集目标节点, 则不用向上遍历, 直接退出循环
+ * @param {*} targetFiber 起始的 Fiber 节点，从此节点开始向上遍历
+ * @param {*} reactName React 事件名称，如 onClick
+ * @param {*} nativeEventType 原生事件类型，如 click
+ * @param {*} inCapturePhase 是否处于捕获阶段
+ * @param {*} accumulateTargetOnly 是否只收集目标节点的事件监听器
+ * @returns 返回listeners数组
+ */
 export function accumulateSinglePhaseListeners(
   targetFiber: Fiber | null,
   reactName: string | null,
@@ -745,19 +858,26 @@ export function accumulateSinglePhaseListeners(
 ): Array<DispatchListener> {
   const captureName = reactName !== null ? reactName + 'Capture' : null;
   const reactEventName = inCapturePhase ? captureName : reactName;
+  /** 用于存储收集到的事件监听器 */
   const listeners: Array<DispatchListener> = [];
-
+  /** 当前遍历到的 Fiber 节点，初始值为 targetFiber */
   let instance = targetFiber;
+  /** 最后一个遇到的宿主组件节点，初始值为 null。 */
   let lastHostComponent = null;
 
   // Accumulate all instances and listeners via the target -> root path.
+  // 从targetFiber开始, 向上遍历, 直到 root 为止, 收集所有的 listeners
   while (instance !== null) {
+    // stateNode：Fiber 节点对应的 DOM 节点(宿主组件)或组件实例(非宿主组件)。
+    // tag：Fiber 节点的类型标签
     const {stateNode, tag} = instance;
     // Handle listeners that are on HostComponents (i.e. <div>)
+    // 1. 处理宿主组件节点：当节点类型是HostComponent时(如: div, span, button等类型)
     if (tag === HostComponent && stateNode !== null) {
       lastHostComponent = stateNode;
 
       // createEventHandle listeners
+      // 原生事件类型时
       if (enableCreateEventHandleAPI) {
         const eventHandlerListeners = getEventHandlerListeners(
           lastHostComponent,
@@ -780,7 +900,7 @@ export function accumulateSinglePhaseListeners(
         }
       }
 
-      // Standard React on* listeners, i.e. onClick or onClickCapture
+      // 标准react事件类型时：Standard React on* listeners, i.e. onClick or onClickCapture
       if (reactEventName !== null) {
         const listener = getListener(instance, reactEventName);
         if (listener != null) {
@@ -789,7 +909,9 @@ export function accumulateSinglePhaseListeners(
           );
         }
       }
-    } else if (
+    }
+    // 处理作用域组件节点
+    else if (
       enableCreateEventHandleAPI &&
       enableScopeAPI &&
       tag === ScopeComponent &&
@@ -821,6 +943,7 @@ export function accumulateSinglePhaseListeners(
     // If we are only accumulating events for the target, then we don't
     // continue to propagate through the React fiber tree to find other
     // listeners.
+    // 如果只收集目标节点, 则不用向上遍历, 直接退出
     if (accumulateTargetOnly) {
       break;
     }

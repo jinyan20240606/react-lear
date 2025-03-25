@@ -13,7 +13,7 @@ class App extends React.Component {
   render() {
     return (
       <>
-        <Header />
+        <Header onClick={this.onChange}/>
         <button onClick={this.onChange}>change</button>
         <div className="content">
           {this.state.list.map((item) => (
@@ -27,11 +27,12 @@ class App extends React.Component {
 
 class Header extends React.PureComponent {
   render() {
+    console.log(`Header Render`, this.props); 
     return (
-      <>
+      <div>
         <h1>title</h1>
         <h2>title2</h2>
-      </>
+      </div>
     );
   }
 }

@@ -436,7 +436,8 @@ export function commitMount(
 }
 
 /**
- * 终会在updateDOMProperties中将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的内容渲染在页面上
+ * - updateFiberProps：将newProps复制到domElement属性上，供后续事件系统收集listener使用
+ * - updateProperties：终会在updateDOMProperties中将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的内容渲染在页面上
  * @param {*} domElement 
  * @param {*} updatePayload 
  * @param {*} type 

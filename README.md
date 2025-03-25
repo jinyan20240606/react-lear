@@ -4,6 +4,10 @@
 
 通过卡颂源码和图解react配合学习，可以轻松领悟
 
+学习源码不要陷进去，不要尝试去理解源码的每一行代码要点到为止，而是要理解源码的整体流程，以及每个流程的作用，然后再去深入理解每个流程的具体实现。
+
+否则整体流程都不熟，细节你更难看懂
+
 1. [卡颂参考链接](https://react.iamkasong.com/#%E7%AB%A0%E8%8A%82%E5%88%97%E8%A1%A8)
 2. [图解react](https://7km.top/)
 2. 个人xmind笔记(wps)
@@ -273,6 +277,17 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
     - 需要node14版本+java-jdk环境
   - 打包命令：`yarn build react/index,react/jsx,react-dom/index,scheduler --type=NODE`
 2. 新脚手架用得react18语法，所以改成17的语法就行
+
+#### 改动了react源码后续进行增量调试
+
+1. react源码增加调试代码
+2. react目录下: 执行打包命令：`yarn build react/index,react/jsx,react-dom/index,scheduler --type=NODE`
+3. 直接就可以在react-test项目中启动看效果了
+  - 下面不用了，因为link过了，react-lear/react/build这块构建内容变化，会自动响应到react-test项目中依赖中
+  - 去/react/build/node_modules/react下：pnpm link -g
+  - 去react/build/node_modules/react-dom下：pnpm link -g  ==== 将构建完的调试源码包重新link到全局
+  - 由于第一次在react-test项目中已经link过了react源码包，所以可以不需要这步，直接启动看效果
+
 
 ### 状态更新流程
 
@@ -600,16 +615,21 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
 6. commit阶段
 
 **源码刨析**
-1. 入口文件：react/packages/react-dom/src/client/ReactDOM.js 的render方法
-2. render方法定义路径：react/packages/react-dom/src/client/ReactDOMLegacy.js
-  1. 调用legacyRenderSubtreeIntoContainer 为render的1级核心方法
-  2. 先legacyCreateRootFromDOMContainer初始化fiberRoot应用根节点
+1. 入口文件：react/packages/react-dom/src/client/ReactDOM.js 的引入的render方法
+    ```js
+    render-->legacyRenderSubtreeIntoContainer---> 1. legacyCreateRootFromDOMContainer
+                                            |         - createLegacyRoot -> ReactDOMBlockingRoot -> createRootImpl    
+                                            |---> 2. updateContainer
+    ```
+2. render方法定义路径：react/packages/react-dom/src/client/ReactDOMLegacy.js ----> 内部调用legacyRenderSubtreeIntoContainer 为render的1级核心方法 --> 方法内部再下面：
+  1. 先legacyCreateRootFromDOMContainer初始化fiberRoot应用根节点
       - mount阶段下更改执行上下文为非批量更新执行上下文，确保mount初始挂载可以立即更新，不调度
       消费这个上下文是在后面的 scheduleUpdateOnFiber 中判断执行
-  3. 再调用协调器的 updateContainer----> scheduleUpdateOnFiber调度更新 为render的2级核心方法,该方法任何render相关的API最终都会调用它
+      - 创建fiberRoot对象
+  2. 再调用协调器的 updateContainer----> scheduleUpdateOnFiber调度更新 为render的2级核心方法,该方法任何render相关的API最终都会调用它
       - 先从fiber到root沿途标记lanes
       - 后调用`performSyncWorkOnRoot`,执行下面2阶段:react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:1074
-  4. [render阶段]: 执行工作循环单元：`performUnitOfWork`：performUnitOfWork react方法：/packages/react-reconciler/src/ReactFiberWorkLoop.old.js
+  3. [render阶段]: 执行工作循环单元：`performUnitOfWork`：performUnitOfWork react方法：/packages/react-reconciler/src/ReactFiberWorkLoop.old.js
       - beginWork：定义react/packages/react-reconciler/src/ReactFiberBeginWork.old.js：核心是reconcileChildren方法
         - 根据 ReactElement对象即nextChildren(调用组件渲染方法的结果)创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
         - 设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
@@ -628,7 +648,7 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
             1. completeWork函数中: 对于HostRoot类型的节点, 仅初次构造时给HostRoot设置workInProgress.flags |= Snapshot,该标记在commitBeforeMutationEffects阶段处理
       - 这块需要实际例子，整体串联图解下：见 [链接](https://7km.top/main/fibertree-create)
         - performUnitOfWork执行完后，得到了完整的fiber树和DOM树(DOM树在最近一个HostComponent的stateNodeDOM实例里)，在fiber树的根节点上挂载了一串effectList副作用队列
-    5. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitRoot
+  4. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitRoot
 3. 核心逻辑：updateContainer方法定义路径：react/packages/react-reconciler/src/ReactFiberReconciler.old.js
 
 ##### mount阶段
@@ -1197,6 +1217,123 @@ react/packages/react-reconciler/src/ReactFiberBeginWork.old.js@updateContextProv
     通过以上 2 个步骤, 保证了所有消费该context的子节点都会被重新构造, 进而保证了状态的一致性, 实现了context更新
     - 优化的逻辑：不是无脑的渲染当前Context.Provider下的所有子树，而是只渲染那些依赖于该Context的组件。
 
-## react16版本对比
+### react合成事件
 
-## react18对比
+> 详看：https://7km.top/main/synthetic-event
+
+从v17.0.0开始, React 不会再将事件处理添加到 document 上, 而是将事件处理添加到渲染 React 树的根 DOM 容器中
+
+react的事件体系, 不是全部都通过事件委托来实现的. 有一些特殊情况, 是直接绑定到对应 DOM 元素上的(如:scroll, load), 它们都通过listenToNonDelegatedEvent函数进行绑定.
+
+- 整体链路
+  - react初始化时事件绑定：
+    - 事件绑定的入口在createRootImpl的listenToAllSupportedEvents
+    - 事件监听的内核listerner中调用dispatchEvent，联动下面逻辑
+  - 事件触发：
+    - 事件触发的入口在dispatchEvent中
+    - 事件触发的核心函数是dispatchEventForPluginEventSystem
+
+#### 问题和优化点
+
+1. 注册监听事件时用了isPassiveListener 变量优化性能：`document.addEventListener('touchmove', function(event) {}, { passive: true })`
+  - 见https://blog.csdn.net/qq_40409143/article/details/116259308
+  - https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget/addEventListener#%E4%BD%BF%E7%94%A8_passive_%E6%94%B9%E5%96%84%E6%BB%9A%E5%B1%8F%E6%80%A7%E8%83%BD
+2. getEventTarget 方法：获取event.target做了很多边界case：值得学习借鉴
+  - 代码：react/packages/react-dom/src/events/getEventTarget.js
+3. 事件绑定和事件触发两大块，触发时会从目标向上收集所有listener，问下listener是如何在一开始就绑定好的？
+  - 对于实验性作用域组件来说：`export function getEventHandlerListeners(` 主要在这个文件里面维护的所有注册，获取的动作方法。
+  - 其他普通宿主组件是：`react/packages/react-dom/src/events/DOMPluginEventSystem.js@accumulateSinglePhaseListeners`的`const listener = getListener(instance, reactEventName)`主要是在fiber节点stateNode'实例的`const internalPropsKey = '__reactProps$' + randomKey;`属性中获取listener
+      - 这个属性是在`commit阶段的mutation阶段--->commitMutationEffects  --- 遍历到Update 标记时，执行-> commitWork--> commitUpdate`时机添加的
+4. 事件触发时，向上收集所有listener时，为什么只处理HostCOmponent类型节点，而不处理其他类组件，Suspense组件？
+  - 仅处理 HostComponent（宿主组件）和 ScopeComponent（实验性作用域组件），而其他类型的组件（如类组件、函数组件、Suspense 组件等）不会直接参与事件监听器的收集
+  - 事件监听器的收集必须基于宿主组件：必须绑定到真实的宿主节点（DOM 节点），因为事件直接发生在浏览器的 DOM 层级上，且具备向上冒泡到根节点的能力
+  - 类组件（ClassComponent）不处理事件监听器的原因：主要是传输最终由子组件的宿主组件监听，
+5. 收集listeners时，为什么要新构造一个专门用于react的合成事件对象Event对象？
+  - SyntheticEvent, 是react内部创建的一个对象, 是原生事件的跨浏览器包装器, 拥有和浏览器原生事件相同的接口(stopPropagation,preventDefault), 抹平不同浏览器 api 的差异, 兼容性好
+
+
+
+#### 事件绑定
+
+1. React在启动时会创建全局对象, 其中在创建fiberRoot的环节中下面路径时, 调用createRootImpl:
+  - 位置：react/packages/react-dom/src/client/ReactDOMRoot.js@createRootImpl
+  ```js
+  render-->legacyRenderSubtreeIntoContainer---> 1. legacyCreateRootFromDOMContainer
+                                          |         - createLegacyRoot -> ReactDOMBlockingRoot -> createRootImpl    
+                                          |---> 2. updateContainer
+  ```
+2. createRootImpl的listenToAllSupportedEvents方法内部
+    - 循环遍历事件属性列表进行注册(注意不需要传事件回调listener)，完成了事件代理
+    - 其中注册的每一个事件listener，都是内部统一封装的，listenee内部就是dispatchEvent的调用，即联动触发到事件触发章节逻辑
+
+##### 统一的原生listener封装
+
+代码位置：react/packages/react-dom/src/events/DOMPluginEventSystem.js@addTrappedEventListener 方法内部
+
+  ```js
+  // listener是通过createEventListenerWrapperWithPriority函数统一产生
+    ...
+    // 1. 构造listener ----> 传dom容器和事件名 和flags
+    let listener = createEventListenerWrapperWithPriority(
+      targetContainer,
+      domEventName,
+      eventSystemFlags,
+    );
+    ...
+  ```
+
+- 统一listener：实现了把原生事件派发到react体系之内, 非常关键.
+    - 比如点击 DOM 触发原生事件, 原生事件最后会被派发到react内部的onClick函数. listener函数就是这个由外至内的关键环节
+
+###### createEventListenerWrapperWithPriority方法
+
+可以看到, 不同的domEventName调用getEventPriorityForPluginSystem后返回不同的优先级, 最终会有 3 种情况:
+
+- DiscreteEvent: 优先级最高, 包括click, keyDown, input等事件, 源码
+对应的listener是dispatchDiscreteEvent
+- UserBlockingEvent: 优先级适中, 包括drag, scroll等事件, 源码
+对应的listener是dispatchUserBlockingUpdate
+- ContinuousEvent: 优先级最低,包括animation, load等事件, 源码
+对应的listener是dispatchEvent
+
+##### 总结
+
+这几种派发器都是以dispatchEvent为基础二次封装的，作为listener的内核注册为事件绑定的回调函数，当事件触发时，就会调用listener从而调用dispatchEvent
+
+#### 事件触发：dispatchEvent
+
+当原生事件触发之后, 首先会进入到`dispatchEvent` 这个回调函数. 而dispatchEvent函数是react事件体系中最关键的函数, 其调用链路较长, 核心步骤如图所示
+
+代码位置：react/packages/react-dom/src/events/ReactDOMEventListener.js@dispatchEvent
+
+![流程图](https://7km.top/static/dispatch-event.46e8e5ef.png)
+
+重点关注其中下面 3 个核心环节:
+
+1. 关联fiber节点实例：**attemptToDispatchEvent**
+  - 核心attemptToDispatchEvent方法：把原生事件和fiber树关联起来
+  - 代码：搜索`export function attemptToDispatchEvent`
+    - 定位原生DOM节点
+    - 获取与DOM节点对应的fiber节点
+    - 下一步：通过插件系统, 派发事件：核心执行 dispatchEventForPluginEventSystem
+      1. 代码搜索`export function dispatchEventForPluginEventSystem(`
+      1. 目标dom的fiber节点初始化fiber节点实例 ancestorInst，并处理下跨根问题
+      2. 基于ancestorInst，去调用 dispatchEventsForPlugins 函数来真正分发事件给插件系统，完成事件处理过程
+2. 收集fiber节点上所有listener填充进dispatchQueue队列中：**SimpleEventPlugin.extractEvents**  ----- 【***dispatchEventsForPlugins 函数逻辑内***】
+  - 代码路径：`react/packages/react-dom/src/events/DOMPluginEventSystem.js@extractEvents`
+  - 在Plugin.extractEvents过程中, 遍历fiber树找到所有对应的domEventName的listener之后, 就会创建合成事件SyntheticEvent, 加入到dispatchQueue中, 等待派发
+  - 注意1- 只收集宿主组件或实验性功能作用域组件上的listener，不会收集类组件等的listener他只是用作props传输不会实际监听，符合冒泡逻辑
+  - 注意2- SyntheticEvent, 是react内部创建的一个对象, 是原生事件的跨浏览器包装器, 拥有和浏览器原生事件相同的接口(stopPropagation,preventDefault), 抹平不同浏览器 api 的差异, 兼容性好
+3. 遍历dispatchQueue队列依次调用派发事件：**processDispatchQueue** ----- 【***dispatchEventsForPlugins 函数逻辑内***】
+  - 代码路径：`react/packages/react-dom/src/events/DOMPluginEventSystem.js@dispatchEventsForPlugins`的processDispatchQueue函数
+  - 内部核心执行processDispatchQueueItemsInOrder遍历dispatchListeners数组, 执行executeDispatch安全执行listener函数.
+    - capture捕获事件: 从上至下调用fiber树中绑定的回调函数, 所以倒序遍历dispatchListeners.
+    - bubble冒泡事件: 从下至上调用fiber树中绑定的回调函数, 所以顺序遍历dispatchListeners.
+
+##### 背景
+
+背景：Portal 的事件传播机制
+在 React 中，Portal 允许将子组件渲染到 DOM 树中其他位置（例如，模态框或浮动层）。每个 Portal 对应一个 Fiber 节点（类型为 HostPortal），其事件传播路径需要特别处理：
+
+事件默认由 Portal 自行处理：Portal 内的事件会沿着其自身的 Fiber 树向上冒泡，直到到达 Portal 的根节点（HostRoot）。
+跨根问题：如果某个 Portal 的根与当前事件的目标容器（targetContainer）不匹配，说明该 Portal 属于另一个 React 根，此时事件不应跨根传播。

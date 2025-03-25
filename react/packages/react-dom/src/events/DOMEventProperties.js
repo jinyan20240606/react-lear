@@ -42,6 +42,9 @@ const eventPriorities = new Map();
 // Lastly, we ignore prettier so we can keep the formatting sane.
 
 // prettier-ignore
+/**
+ * 离散事件类型列表：如点击，双击事件等
+ */
 const discreteEventPairsForSimpleEventPlugin = [
   ('cancel': DOMEventName), 'cancel',
   ('click': DOMEventName), 'click',
@@ -79,6 +82,9 @@ const discreteEventPairsForSimpleEventPlugin = [
   ('volumechange': DOMEventName), 'volumeChange',
 ];
 
+/**
+ * 其他离散事件类型列表
+ */
 const otherDiscreteEvents: Array<DOMEventName> = [
   'change',
   'selectionchange',
@@ -96,7 +102,11 @@ if (enableCreateEventHandleAPI) {
   otherDiscreteEvents.push('beforeblur', 'afterblur');
 }
 
-// prettier-ignore
+/**
+ * 用户阻塞事件类型列表：如拖拽，鼠标滚轮等
+ * 
+ * - 这些事件通常涉及到用户的交互，可能会导致界面响应变慢或阻塞用户体验（例如，鼠标移动、滚动等），因此它们被称为“用户阻塞”事件
+ */
 const userBlockingPairsForSimpleEventPlugin: Array<string | DOMEventName> = [
   ('drag': DOMEventName), 'drag',
   ('dragenter': DOMEventName), 'dragEnter',
@@ -116,6 +126,11 @@ const userBlockingPairsForSimpleEventPlugin: Array<string | DOMEventName> = [
 ];
 
 // prettier-ignore
+/**
+ * 连续事件类型列表：如动画结束，播放进度
+ * 
+ * - 这类事件往往不需要立即响应，可以批量处理或合并，以提高性能
+ */
 const continuousPairsForSimpleEventPlugin: Array<string | DOMEventName> = [
   ('abort': DOMEventName), 'abort',
   (ANIMATION_END: DOMEventName), 'animationEnd',
@@ -186,6 +201,13 @@ function setEventPriorities(
   }
 }
 
+/**
+ * 就是看当前事件名属于哪一类事件，返回对应的标记 ---- 每一类的处理优先级不同，所以需要区分
+ * 
+ * - 共3类：离散事件0、用户阻塞事件1、连续事件2 （数字小的优先级最高）
+ * @param {*} domEventName 
+ * @returns 返回事件优先级，兜底返回连续事件优先级2
+ */
 export function getEventPriorityForPluginSystem(
   domEventName: DOMEventName,
 ): EventPriority {

@@ -49,6 +49,20 @@ import {IS_CAPTURE_PHASE} from '../EventSystemFlags';
 
 import {enableCreateEventHandleAPI} from 'shared/ReactFeatureFlags';
 
+/**
+ * - 提取合成事件listeners
+ * - 从targetInst向上遍历fiber树，提取domEventName的所有listener到dispatchQueue队列中
+ *    - 注意从targetInstfiber节点向上遍历，一直遍历到根节点
+ * - 初始化合成的事件对象构造函数作为event变量：最终添加至dispatchQueue.push({event, listeners});，返回
+ * @param {*} dispatchQueue 
+ * @param {*} domEventName 
+ * @param {*} targetInst 一般情况下就是触发的目标DOM对应的fiber节点
+ * @param {*} nativeEvent 
+ * @param {*} nativeEventTarget 
+ * @param {*} eventSystemFlags 
+ * @param {*} targetContainer 
+ * @returns 
+ */
 function extractEvents(
   dispatchQueue: DispatchQueue,
   domEventName: DOMEventName,
@@ -58,12 +72,15 @@ function extractEvents(
   eventSystemFlags: EventSystemFlags,
   targetContainer: EventTarget,
 ): void {
+  // 0. 获取react事件名称:如onClick
   const reactName = topLevelEventsToReactNames.get(domEventName);
   if (reactName === undefined) {
     return;
   }
+  // 1. 初始化合成事件构造函数
   let SyntheticEventCtor = SyntheticEvent;
   let reactEventType: string = domEventName;
+  // 2. 根据不同的 DOM 事件名称选择合适的合成事件构造函数
   switch (domEventName) {
     case 'keypress':
       // Firefox creates a keypress event for function keys too. This removes
@@ -158,16 +175,19 @@ function extractEvents(
       break;
   }
 
+  // 3. 判断是否处于捕获阶段
   const inCapturePhase = (eventSystemFlags & IS_CAPTURE_PHASE) !== 0;
+  // 4. 处理非管理节点的事件listener
   if (
     enableCreateEventHandleAPI &&
     eventSystemFlags & IS_EVENT_HANDLE_NON_MANAGED_NODE
   ) {
+    // 1. 收集所有监听该事件的函数.
     const listeners = accumulateEventHandleNonManagedNodeListeners(
       // TODO: this cast may not make sense for events like
       // "focus" where React listens to e.g. "focusin".
       ((reactEventType: any): DOMEventName),
-      targetContainer,
+      targetContainer,// 用的根节点容器
       inCapturePhase,
     );
     if (listeners.length > 0) {
@@ -179,9 +199,12 @@ function extractEvents(
         nativeEvent,
         nativeEventTarget,
       );
+      // 2. 构造合成事件, 添加到派发队列
       dispatchQueue.push({event, listeners});
     }
-  } else {
+  }
+  // 5. 处理正常管理节点的事件listener
+  else {
     // Some events don't bubble in the browser.
     // In the past, React has always bubbled them, but this can be surprising.
     // We're going to try aligning closer to the browser behavior by not bubbling
@@ -193,9 +216,9 @@ function extractEvents(
       // Then we can remove this special list.
       // This is a breaking change that can wait until React 18.
       domEventName === 'scroll';
-
+    // 1. 收集从targetInst向上遍历fiber树，提取所有监听该事件的函数.   
     const listeners = accumulateSinglePhaseListeners(
-      targetInst,
+      targetInst, //一般情况下就是触发的目标DOM对应的fiber节点
       reactName,
       nativeEvent.type,
       inCapturePhase,
@@ -210,6 +233,7 @@ function extractEvents(
         nativeEvent,
         nativeEventTarget,
       );
+      // 2. 构造合成事件, 添加到派发队列
       dispatchQueue.push({event, listeners});
     }
   }

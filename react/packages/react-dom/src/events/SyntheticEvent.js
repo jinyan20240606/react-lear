@@ -149,6 +149,11 @@ const EventInterface = {
   defaultPrevented: 0,
   isTrusted: 0,
 };
+/**
+ * 就是模拟实现的event事件对象
+ * 
+ * SyntheticEvent, 是react内部创建的一个对象, 是原生事件的跨浏览器包装器, 拥有和浏览器原生事件相同的接口(stopPropagation,preventDefault), 抹平不同浏览器 api 的差异, 兼容性好.
+ */
 export const SyntheticEvent = createSyntheticEvent(EventInterface);
 
 const UIEventInterface: EventInterfaceType = {

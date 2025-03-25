@@ -47,7 +47,7 @@ function shouldPreventMouseEvent(
 /**
  * @param {object} inst The instance, which is the source of events.
  * @param {string} registrationName Name of listener (e.g. `onClick`).
- * @return {?function} The stored callback.
+ * @return {?function} 返回具体fiber节点上的对应事件名的事件回调，如 props.onClick的值
  */
 export default function getListener(
   inst: Fiber,

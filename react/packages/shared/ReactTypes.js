@@ -88,8 +88,17 @@ export type RefObject = {|
 
 export type EventPriority = 0 | 1 | 2;
 
+/**
+ * 离散事件优先级，为数字0
+ */
 export const DiscreteEvent: EventPriority = 0;
+/**
+ * 用户阻塞事件优先级，为数字1
+ */
 export const UserBlockingEvent: EventPriority = 1;
+/**
+ * 连续事件优先级，为数字2
+ */
 export const ContinuousEvent: EventPriority = 2;
 
 export type ReactFundamentalComponentInstance<C, H> = {|

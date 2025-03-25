@@ -69,7 +69,20 @@ export function isContainerMarkedAsRoot(node: Container): boolean {
 // pass the Container node as the targetNode, you will not actually get the
 // HostRoot back. To get to the HostRoot, you need to pass a child of it.
 // The same thing applies to Suspense boundaries.
+/**
+ * ## 从给定的 DOM 节点找到其对应的fiber节点
+ * - 直接匹配：如果给定的 DOM 节点本身就是一个 React 管理的节点，则直接返回对应的 Fiber 实例。
+ * - 查找最近的 React 管理节点：如果给定的节点不是 React 管理的，则沿着 DOM 树向上查找，直到找到一个由 React 管理的节点。
+ *    - 处理未渲染或脱水状态的子树：考虑到可能存在的脱水（dehydrated）子树（例如在服务端渲染后客户端尚未完成 hydrate 的部分），函数会尝试识别这些边界并返回适当的 Fiber 实例。
+ *    - 特殊处理 Suspense 和 HostRoot：确保正确处理 Suspense 边界和根节点（HostRoot），即使它们不在直接的 DOM 层次中。
+ *    - 非react管理的节点：这些处理事件时，找其最近的react管理的节点代替
+ *      - 使用 document.createElement 动态创建的元素
+ *      - 使用 dangerouslySetInnerHTML 插入的 HTML
+ * @param {*} targetNode targetDOM
+ * @returns 返回targetDOM对应的fiber节点或null
+ */
 export function getClosestInstanceFromNode(targetNode: Node): null | Fiber {
+   // 尝试直接从目标节点获取 Fiber 实例
   let targetInst = (targetNode: any)[internalInstanceKey];
   if (targetInst) {
     // Don't return HostRoot or SuspenseComponent here.
@@ -77,6 +90,7 @@ export function getClosestInstanceFromNode(targetNode: Node): null | Fiber {
   }
   // If the direct event target isn't a React owned DOM node, we need to look
   // to see if one of its parents is a React owned DOM node.
+  // 如果没有找到，则向上查找父节点
   let parentNode = targetNode.parentNode;
   while (parentNode) {
     // We'll check if this is a container root that could include
@@ -183,6 +197,11 @@ export function getNodeFromInstance(inst: Fiber): Instance | TextInstance {
   invariant(false, 'getNodeFromInstance: Invalid argument.');
 }
 
+/**
+ * 取stateNode对象上的props值
+ * @param {*} 
+ * @returns 
+ */
 export function getFiberCurrentPropsFromNode(
   node: Instance | TextInstance | SuspenseInstance,
 ): Props {
@@ -201,6 +220,11 @@ export function updateFiberProps(
   (node: any)[internalPropsKey] = props;
 }
 
+/**
+ * 获取dom上存的internalEventHandlersKey属性的值（所有要注册的事件名列表），没有则创建一个新的Set
+ * @param {*} node DPM节点
+ * @returns 
+ */
 export function getEventListenerSet(node: EventTarget): Set<string> {
   let elementListenerSet = (node: any)[internalEventHandlersKey];
   if (elementListenerSet === undefined) {

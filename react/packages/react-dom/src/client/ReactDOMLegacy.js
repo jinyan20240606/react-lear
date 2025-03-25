@@ -194,8 +194,8 @@ function warnOnInvalidCallback(callback: mixed, callerName: string): void {
  * 
  * 它分为两个主要部分：初始挂载和更新。
  * 1. 初始挂载时
- *    1. 创建一个新的根实例，拿到fiberRoot
- *    2. 传入执行updateContainer
+ *    1. 执行legacyCreateRootFromDOMContainer方法：创建一个新的根实例，拿到fiberRoot
+ *    2. 再传入执行updateContainer
  * 2. 更新
  *    1. 使用现有的根实例进行更新拿到fiberRoot
  *    2. 传入执行updateContainer
@@ -331,7 +331,7 @@ export function hydrate(
 }
 
 /**
- * ReactDOM.render 入口函数 11181715
+ * ReactDOM.render 入口函数 03211747
  * @param {*} element 
  * @param {*} container 
  * @param {*} callback 
@@ -345,7 +345,7 @@ export function render(
   // eslint-disable-next-line react-internal/invariant-args
   invariant(
     isValidContainer(container),
-    'Target container is not a DOM element哈哈.',
+    'Target container is not a DOM element哈哈2.',
   );
   debugger;
   if (__DEV__) {

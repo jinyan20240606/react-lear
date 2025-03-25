@@ -1555,7 +1555,9 @@ function commitDeletion(
  * 
  * 根据Fiber.tag分别处理：主要处理FunctionComponent和HostComponent类型逻辑，类组件类型等没有任何逻辑
  *    - FunctionComponent：主要执行 commitHookEffectListUnmount消费HookLayout | HookHasEffect 这俩Effect对象上的标记
- *    - HostComponent：主要执行commitUpdate。将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的值更新渲染在页面对应DOM上
+ *    - HostComponent：主要执行commitUpdate。
+ *        - 将render阶段 completeWork中为Fiber节点赋值的updateQueue对应的值更新渲染在页面对应DOM上
+ *        - 将最终计算好的props值复制到stateNode-DOM对象上的internalPropsKey属性上，供后续事件收集listener使用
  * @param {*} current 
  * @param {*} finishedWork 
  * @returns 
