@@ -80,7 +80,9 @@ if (
     return false;
   };
   requestPaint = forceFrameRate = function() {};
-} else {
+}
+// 如果支持 MessageChannel，使用 MessageChannel 实现
+else {
   // 捕获对原生 API 的本地引用，以防被 polyfill 覆盖
   const setTimeout = window.setTimeout;
   const clearTimeout = window.clearTimeout;

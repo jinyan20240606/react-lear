@@ -306,7 +306,7 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
   // 获取当前时间戳
   var currentTime = getCurrentTime();
 
-  // 计算任务的开始时间
+  // 1. 计算任务的开始时间
   var startTime;
   if (typeof options === 'object' && options !== null) {
     var delay = options.delay;
@@ -322,7 +322,7 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
     startTime = currentTime;
   }
 
-  // 根据任务的6大优先级确定任务的超时时间
+  // 2. 根据任务的6大优先级确定任务的过期时间
   var timeout; // 毫秒延时时间
   switch (priorityLevel) {
     case ImmediatePriority:
@@ -346,7 +346,7 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
   // 计算任务的到期时间
   var expirationTime = startTime + timeout;
 
-  // 创建新的任务对象
+  // 3. 创建调度任务
   var newTask = {
     id: taskIdCounter++, // 任务的唯一ID
     callback, // 任务的回调函数
@@ -383,6 +383,7 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
   } else {
     // 这是一个立即执行的任务。直接push进taskQueue队列中安排执行
     newTask.sortIndex = expirationTime; // 设置任务的排序索引为到期时间
+    // 4. 推进任务队列 
     push(taskQueue, newTask); // 将任务推入任务队列
 
     // 如果启用了性能分析，标记任务开始时间和排队状态
@@ -391,10 +392,10 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
       newTask.isQueued = true;
     }
 
-    // 如果没有安排主机回调且当前没有执行工作，安排主机回调
+    // 5. 请求调度，消费任务
     if (!isHostCallbackScheduled && !isPerformingWork) {
-      isHostCallbackScheduled = true; // 标记主机回调已安排
-      requestHostCallback(flushWork); // 请求主机回调
+      isHostCallbackScheduled = true; // 标记调度任务已安排
+      requestHostCallback(flushWork); // 请求调度任务队列
     }
   }
 

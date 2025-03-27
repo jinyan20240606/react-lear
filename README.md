@@ -15,6 +15,15 @@
 
 - [react-learn](#react-learn)
   - [概念经验](#概念经验)
+    - [整体架构分层](#整体架构分层)
+      - [调度器Schedule包流程](#调度器schedule包流程)
+        - [调度实现](#调度实现)
+          - [一、内核](#一内核)
+          - [二、任务队列管理](#二任务队列管理)
+        - [节流防抖](#节流防抖)
+        - [经典问答](#经典问答)
+      - [协调器的流程](#协调器的流程)
+      - [渲染器的流程](#渲染器的流程)
     - [易混淆的关键变量](#易混淆的关键变量)
     - [常见概念](#常见概念)
     - [mode与优先级和通道lanes概念](#mode与优先级和通道lanes概念)
@@ -43,6 +52,7 @@
           - [回溯阶段 completeWork](#回溯阶段-completework)
         - [图解理解](#图解理解)
         - [总结](#总结)
+    - [fiber树渲染](#fiber树渲染)
     - [状态更新API入手](#状态更新api入手)
       - [ReactDOM.render流程](#reactdomrender流程)
         - [mount阶段](#mount阶段)
@@ -75,7 +85,6 @@
           - [组件销毁](#组件销毁)
       - [极简useState-hook的实现](#极简usestate-hook的实现)
       - [hooks的数据结构](#hooks的数据结构)
-    - [Schedule包的调度器刨析](#schedule包的调度器刨析)
     - [React的Context原理](#react的context原理)
       - [总结](#总结-2)
       - [创建Context](#创建context)
@@ -92,7 +101,183 @@
 
 ## 概念经验
 
-> 整体流程概览图：https://7km.top/main/macro-structure
+### 整体架构分层
+
+> 整体架构分层概览图：https://7km.top/main/macro-structure
+
+**按包名即功能划分的层：**
+- React15 架构可以分为两层--按包名划分的层：
+  - Reconciler（协调器）—— 负责找出变化的组件
+  - Renderer（渲染器）—— 负责将变化的组件渲染到页面上
+- React16 架构可以分为三层---按包名划分的层：
+  - Scheduler（调度器）—— 调度任务的优先级，高优任务优先进入Reconciler
+  - Reconciler（协调器）—— 负责找出变化的组件
+  - Renderer（渲染器）—— 负责将变化的组件渲染到页面上
+ 
+可以看到，相较于 React15，React16 中新增了Scheduler（调度器）
+
+**如果按渲染时机分层:**
+1. 调度阶段
+2. render阶段  --- 发生在协调器中
+3. commit阶段  --- 发生在渲染器中
+
+#### 调度器Schedule包流程
+
+> 参考https://7km.top/main/scheduler
+
+- 核心职责：就是执行接收的任意回调，实现时间分片，可中断恢复执行的功能。
+  - 把react-reconciler提供的回调函数, 包装到一个任务对象中.
+  - 在内部维护一个任务队列, 优先级高的排在最前面.
+  - 循环消费任务队列, 直到队列清空
+
+1. 协调器:通信到调度器的接口位置：源码路径`react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js`中的
+   1. scheduleUpdateOnFiber
+      1. ensureRootIsScheduled
+         1. scheduleSyncCallback 调度为同步任务。
+            1. Scheduler_scheduleCallback --> 进入调度器入口文件
+         2. scheduleCallback 调度为异步任务
+            1. Scheduler_scheduleCallback --> 进入调度器入口文件
+2. 调度器:schedule包的入口文件：`react/packages/scheduler/src/Scheduler.js`
+   1. Scheduler_scheduleCallback:(主要处理fiber优先级到调度优先级的处理转化，调度任务队列taskQueue，内核执行requestHostCallback消费任务)
+
+##### 调度实现
+
+> 代码学习注释，调度中心最核心的代码：`react/packages/scheduler/src/forks/SchedulerHostConfig.default.js`
+
+![架构图0001](./imgs/调度器核心流程图.png)
+
+###### 一、内核
+该 js 文件一共导出了 8 个函数, 最核心的逻辑, 就集中在了这 8 个函数中 
+```js
+// 调度相关
+export let requestHostCallback; // 请求及时回调，消费任务队列里的任务回调: port.postMessage
+export let cancelHostCallback; // 取消及时回调: scheduledHostCallback = null
+export let requestHostTimeout; // 请求延时回调: setTimeout
+export let cancelHostTimeout; // 取消延时回调: cancelTimeout
+
+// 时间切片相关
+export let shouldYieldToHost; // 是否让出主线程(currentTime >= deadline && needsPaint): 让浏览器能够执行更高优先级的任务(如ui绘制, 用户输入等)
+export let requestPaint; // 请求绘制: 设置 needsPaint = true
+export let getCurrentTime; // 获取当前时间
+export let forceFrameRate; // 强制设置 yieldInterval (让出主线程的周期). 这个函数虽然存在, 但是从源码来看, 几乎没有用到
+```
+
+**调度相关4个函数：请求或取消调度** 
+- requestHostCallback(callback)：消费任务队列里的任务回调即callback也就是下面的fluskWork工作循环，调用堆栈如下
+  - scheduledHostCallback = callback
+  - port.postMessage(null);
+    - onMessage：performWorkUntilDeadline
+      - deadline = currentTime + yieldInterval;
+      - 是否有剩余任务 = scheduledHostCallback(hasTimeRemaining, currentTime)
+      - 有则：继续发起调度port.postMessage(null)
+- cancelHostCallback
+- requestHostTimeout
+- cancelHostTimeout
+
+1. 它们的目的就是请求执行(或取消)回调函数---即消费任务队列里的任务回调. 现在重点介绍其中的及时回调(延时回调的 2 个函数暂时属于保留 api, 17.0.2 版本其实没有用上）
+   1. requestHostCallback种实际执行参数回调的内核函数为：performWorkUntilDeadline，这里更新了时间切片相关变量的deadline = currentTime + yieldInterval;
+2. MessageChannel在浏览器事件循环中属于宏任务, 所以调度中心永远是异步执行回调函数
+
+```js
+// 代码见
+const performWorkUntilDeadline = () => {
+  if (scheduledHostCallback !== null) {
+    const currentTime = getCurrentTime(); // 1. 获取当前时间
+    deadline = currentTime + yieldInterval; // 2. 设置deadline
+    const hasTimeRemaining = true;
+    try {
+      // 3. 执行回调, 返回是否有还有剩余任务
+      const hasMoreWork = scheduledHostCallback(hasTimeRemaining, currentTime);
+      if (!hasMoreWork) {
+        // 没有剩余任务, 退出
+        isMessageLoopRunning = false;
+        scheduledHostCallback = null;
+      } else {
+        port.postMessage(null); // 有剩余任务, 发起新的调度
+      }
+    } catch (error) {
+      port.postMessage(null); // 如有异常, 重新发起调度
+      throw error;
+    }
+  } else {
+    isMessageLoopRunning = false;
+  }
+  needsPaint = false; // 重置开关
+};
+```
+
+**时间切片(time slicing)相关4个变量: 执行时间分割, 让出主线程(把控制权归还浏览器, 浏览器可以处理用户输入, UI 绘制等紧急任务).**
+- getCurrentTime: 获取当前时间
+- shouldYieldToHost: 是否让出主线程
+- requestPaint: 请求绘制
+- forceFrameRate: 强制设置 yieldInterval(从源码中的引用来看, 算一个保留函数, 其他地方没有用到)
+
+###### 二、任务队列管理
+
+在Scheduler.js入口文件中中, 会先全局维护了一个taskQueue, 任务队列管理就是围绕这个taskQueue展开，上面的调度相关4个函数, 都是围绕这个taskQueue展开消费任务用的。
+`var taskQueue = [];`
+taskQueue是一个小顶堆数组, 关于堆排序的详细解释, 可以查看React 算法之堆排序.
+
+> 主要发生在`function unstable_scheduleCallback(p`函数中
+
+1. 创建任务
+   1. 创建任务
+   ```js
+    // 3. 创建调度任务
+    var newTask = {
+      id: taskIdCounter++, // 任务的唯一ID
+      callback, // 任务的回调函数
+      priorityLevel, // 任务的优先级
+      startTime, // 任务的开始时间
+      expirationTime, // 任务的到期时间
+      sortIndex: -1, // 任务的排序索引，初始化为-1后面为startTime ===> 用于最小堆timerQueue的排序比较下标
+    };
+   ```
+   2. push进任务队列
+2. 消费任务
+   2. 请求调度requestHostCallback(flushWork)
+      1. flushWork函数作为参数被传入调度中心内核等待回调. requestHostCallback函数在上文调度内核中已经介绍过了, 在调度中心中, 下一个事件循环就执行flushWork
+   3. `flushWork`函数的调用堆栈
+      1. `workLoop(hasTimeRemaining, initialTime)`  ---> 就是宏观中两大工作循环的调度器的工作循环的代码位置
+      2. workLoop就是一个大while循环, 虽然代码也不多, 但是非常精髓, 在此处实现了时间切片(time slicing)和fiber树的可中断渲染. 这 2 大特性的实现, 都集中于这个while循环.
+**时间切片原理**
+消费任务队列的过程中, 可以消费1~n个 task, 甚至清空整个 queue. 但是在每一次具体执行task.callback之前都要进行超时检测, 如果超时可以立即退出循环并等待下一次调用.
+**可中断渲染原理**
+在时间切片的基础之上, 如果单个task.callback执行时间就很长(假设 200ms). 就需要task.callback自己能够检测是否超时, 所以在 fiber 树构造过程中, 每构造完成一个单元, 都会检测一次超时(源码链接), 如遇超时就退出fiber树构造循环, 并返回一个新的回调函数(就是此处的continuationCallback)并等待下一次回调继续未完成的fiber树构造
+
+
+##### 节流防抖
+
+主要发生在`function ensureRootIsScheduled(root: FiberRoot`这个与调度器通信接口处
+
+1. 在task注册完成之后, 会设置fiberRoot对象上的属性(fiberRoot是 react 运行时中的重要全局对象, 可参考React 应用的启动过程), 代表现在已经处于调度进行中
+2. 再次进入ensureRootIsScheduled时(比如连续 2 次setState, 第 2 次setState同样会触发reconciler运作流程中的调度阶段), 如果发现处于调度中, 则需要一些节流和防抖措施, 进而保证调度性能.
+   1. 节流(判断条件: existingCallbackPriority === newCallbackPriority, 新旧更新的优先级相同, 如连续多次执行setState), 则无需注册新task(继续沿用上一个优先级相同的task), 直接退出调用.
+   2. 防抖(判断条件: existingCallbackPriority !== newCallbackPriority, 新旧更新的优先级不同), 则取消旧task, 重新注册新task
+
+##### 经典问答
+1. 调度器时间分片执行回调为什么要用MessageChannel这个异步函数？
+   1. https://juejin.cn/post/6953804914715803678?share_token=fa7d487b-ce0c-40e7-8e28-3bf3dfc5dbd6
+   2. 源码中可以看到，当不支持MessageCHannel时，会降级使用setTimeout来模拟MessageChannel
+
+#### 协调器的流程
+
+> 参考https://7km.top/main/reconciler-workflow
+
+![流程图](./imgs/协调器流程图.png)
+
+1. react-reconciler包, 有 4 个功能:
+   1. 输入: 暴露api函数(如: scheduleUpdateOnFiber), 供给其他包(如react包)调用.
+   2. 注册调度任务: 与调度中心(scheduler包)交互, 注册调度任务task, 等待任务回调.
+   3. 执行任务回调: 在内存中构造出fiber树, 同时与与渲染器(react-dom)交互, 在内存中创建出与fiber对应的DOM节点.
+   4. 输出: 与渲染器(react-dom)交互, 渲染DOM节点
+2. 具体理解：见`#### ReactDOM.render流程`章节
+
+#### 渲染器的流程
+
+- react-dom包, 有 2 个核心职责:
+  - **负责启动过程**：引导react应用的启动(通过ReactDOM.render).
+  - **负责commit过程**：实现HostConfig协议(源码在 ReactDOMHostConfig.js 中), 能够将react-reconciler包构造出来的fiber树表现出来, 生成 dom 节点(浏览器中), 或生成字符串(ssr).
 
 ### 易混淆的关键变量
 
@@ -168,7 +353,7 @@
       - 6大调度优先级Prority：packages/scheduler/src/SchedulerPriorities.js
     - 优先级等级(ReactPriorityLevel) : 位于react-reconciler包中的SchedulerWithReactIntegration.js, 负责上述 2 套优先级体系的转换.
       - 协同调度中心(scheduler包)和 fiber 树构造(react-reconciler包)中对优先级的使用, 则需要转换SchedulerPriority和LanePriority, 转换的桥梁正是ReactPriorityLevel
-2. 优先级的使用处：主要用来控制调度器中 任务调度循环中循环的顺序
+2. 优先级的使用处：上面3种优先级，应该都是各自模块用到的，fiber优先级用于fiber构造阶段，调度优先级用于调度任务阶段：主要用来控制调度器中 任务调度循环中循环的顺序。优先级等级用于两者兼容转化
 
 
 ## react17学习
@@ -187,6 +372,12 @@
 
 ### 常见数据结构
 
+> 数据结构详见参考：https://7km.top/main/object-structure
+
+1. ReactElement元素初期伪树不是真正的树结构，因为children中有组件类型，组件的children在后续的协调阶段才会计算render方法生成，所以是伪树
+2. 它的生成过程是自顶向下的, 是所有组件节点的总和.
+
+
 ```js
 // 数据结构详见：https://7km.top/main/object-structure 解读。
 
@@ -195,7 +386,7 @@ function List () {
   return (
     <ul>
       <li key="0">0</li>
-      <li key="1">1</li>
+      <MyContent key="1">1</MyContent>
       <li key="2">2</li>
       <li key="3">3</li>
     </ul>
@@ -204,18 +395,31 @@ function List () {
 // ==== 对应下面的reactElement 元素类型 ====
 {
   $$typeof: Symbol(react.element),
-  key: null,
+  key: null, // key属性在reconciler阶段会用到, 目前只需要知道所有的ReactElement对象都有 key 属性(且其默认值是 null, 这点十分重要, 在 diff 算法中会使用到
   props: {
     children: [
       {$$typeof: Symbol(react.element), type: "li", key: "0", ref: null, props: {…}, …}
-      {$$typeof: Symbol(react.element), type: "li", key: "1", ref: null, props: {…}, …}
+      {$$typeof: Symbol(react.element), type: class MyContent, key: "1", ref: null, props: {…}, …}
       {$$typeof: Symbol(react.element), type: "li", key: "2", ref: null, props: {…}, …}
       {$$typeof: Symbol(react.element), type: "li", key: "3", ref: null, props: {…}, …}
     ]
   },
   ref: null,
-  type: "ul"
+  /**
+   * 它的值可以是字符串(代表div,span等 dom 节点), 函数(代表function, class等节点), 或者 react 内部定义的节点类型(portal,context,fragment等)
+在reconciler阶段, 会根据 type 执行不同的逻辑(在 fiber 构建阶段详细解读).
+如 type 是一个字符串类型, 则直接使用.
+如 type 是一个ReactComponent类型, 则会调用其 render 方法获取子节点.
+如 type 是一个function类型,则会调用该方法获取子节点
+   */
+  type: "ul"// 属性决定了节点的种类:
 }
+/**
+ * React Component组件在ReactElement伪树中结构
+ * 1. 只是ReactElement的type诸多类型的一种
+ * 2. class和function类型的组件,其子节点是在 render 之后(reconciler阶段)才生成的. 此处只是单独表示ReactElement的数据结构.
+ */
+
 
 // fiberRoot结构 定义见react/packages/react-reconciler/src/ReactInternalTypes.js
 export type FiberRoot = {
@@ -284,11 +488,11 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   this.pendingProps = pendingProps;
   this.memoizedProps = null; // 上次计算好的最终props新值---- pendingProps和memoizedProps比较可以得出属性是否变动.
 
-  // updateQueue 属性在类组件和函数组件中的结构不一样，都是存着各自结构的副作用队列
-  // 1. class组件：存生命周期钩子componentDidMount类的副作用队列。宿主组件存储 某个组件状态更新产生的 Updates链表 的地方，是以queue为类型保存的 ==== 类型定义：react/packages/react-reconciler/src/ReactUpdateQueue.old.js
+  // updateQueue 属性在类组件和函数组件中的结构不一样，除了Update更新对象还会都存着各自结构的副作用队列effects。
+  // 1. class组件：存生命周期钩子componentDidMount类的副作用队列。组件状态更新产生的 Updates链表 的地方，是以queue为类型保存的 ==== 类型定义：react/packages/react-reconciler/src/ReactUpdateQueue.old.js
   // 2. 函数组件：存useEffect之类的副作用队列，详见hooks章节
   // 3. HostComponent: 是数组类型，奇数索引为DOM更新的key，偶数索引为value ---> 这个数组值是completeWork时针对Host类型组件更新的updateQueue值
-  this.updateQueue: queue = null; // 状态更新创建Update链表，然后推入到这个updateQueue，等待再beginWork中处理，处理方法在react/packages/react-reconciler/src/ReactUpdateQueue.old.js:processUpdateQueue
+  this.updateQueue: queue = null; // 存储update更新对象的队列, 每一次发起更新, 都需要在该队列上创建一个update对象。状态更新创建Update链表，然后推入到这个updateQueue，等待再beginWork中处理，处理方法在react/packages/react-reconciler/src/ReactUpdateQueue.old.js:processUpdateQueue
 
   // 保存当前组件状态更新计算后准备更新的state
   // 类组件存储fiber的状态，函数组件存储hooks链表. 在function类型的组件中, fiber.memoizedState就指向Hook队列(Hook队列保存了function类型的组件状态).
@@ -298,10 +502,13 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   // dependencies属性会在更新时使用
   // 主要在Context上下文更新时，用来广播所有子树中依赖这个Context的，判断标准就是fiber节点的dependencies中是否有对应的Context
   // 详见：更新Context 章节
-  this.dependencies = null;
+  this.dependencies = null; // 该fiber节点所依赖的(contexts, events)等
 
+  // 二进制位Bitfield,继承至父节点,影响本fiber节点及其子树中所有节点. 与react应用的运行模式有关(有ConcurrentMode, BlockingMode, NoMode等选项)
   this.mode = mode;
 
+
+  // Effect 副作用相关
   /**
    * flags与effectList链表是成对存在的，firstEffect链接的是有副作用的fiber节点，该fiber节点上必须会含对应的副作用标记flags
    * 
@@ -432,7 +639,7 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
         shared: {
           pending: update,// 保存此次更新的update的链表
         },
-        effects: null,
+        effects: null, // 存储组件更新时的副作用队列
       };
       // beginWork时：遍历baseUpdate链表在baseState基础上计算最终要更新的state, 并赋值给fiber.memoizedState
       ```
@@ -497,7 +704,7 @@ export type Fiber = {|
 
 参考博客：https://7km.top/main/fibertree-update
 
-参考下面章节：[ReactDOM.render流程](#reactdomrender流程)
+参考下面章节：[#### ReactDOM.render流程](#reactdomrender流程)
 
 #### 整体数据结构变化
 
@@ -676,7 +883,14 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
 ##### 总结
 
 本节演示了更新阶段fiber树构造(对比更新)的全部过程, 跟踪了创建过程中内存引用的变化情况. 与初次构造最大的不同在于fiber节点是否可以复用, 其中bailout逻辑是fiber子树能否复用的判断依据
-      
+
+### fiber树渲染
+
+> https://7km.top/main/fibertree-commit#%E6%B8%B2%E6%9F%93%E5%89%8D
+> https://react.iamkasong.com/#%E7%AB%A0%E8%8A%82%E5%88%97%E8%A1%A8
+
+自己的代码总结见`[commit阶段]：执行`commitRoot`路径` 本文件全文搜索这块
+
 ### 状态更新API入手
 
 #### ReactDOM.render流程
@@ -684,7 +898,7 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
 > 相关博客解读可参考https://7km.top/main/bootstrap和 卡颂的章节
 
 **大体流程**
-1. 创建fiberRootNode和rootFiber和初始化UpdateQueue ====== 后面都主要发生在react/packages/react-reconciler/src/ReactFiberReconciler.old.js updateContainer函数里
+1. 创建ReactDOMRoot对象及fiberRootNode和rootFiber和初始化UpdateQueue ====== 后面都主要发生在react/packages/react-reconciler/src/ReactFiberReconciler.old.js updateContainer函数里
 2. 创建Update对象，并赋值给rootFiber.updateQueue,来触发一次更新
 3. 从fiber到root  --- 在调度更新函数：scheduleUpdateOnFiber中执行的
 4. 调度更新：scheduleUpdateOnFiber
@@ -692,21 +906,30 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
 6. commit阶段
 
 **源码刨析**
-1. 入口文件：react/packages/react-dom/src/client/ReactDOM.js 的引入的render方法
+1. 入口文件：react/packages/react-dom/src/client/ReactDOM.js 的引入的render方法的整体调用堆栈
     ```js
-    render-->legacyRenderSubtreeIntoContainer---> 1. legacyCreateRootFromDOMContainer
-                                            |         - createLegacyRoot -> ReactDOMBlockingRoot -> createRootImpl    
-                                            |---> 2. updateContainer
+    render-->legacyRenderSubtreeIntoContainer---> 1. legacyCreateRootFromDOMContainer// 1-启动阶段：初始化3个对象与dom容器关联
+                                            |         - createLegacyRoot -> ReactDOMBlockingRoot -> createRootImpl(该方法创建一个fiberRoot对象, 并将其挂载
+                                            |                                                                      到this._internalRoot之上)    
+                                            |---> 2. updateContainer// 2-调用更新入口，进入协调器的更新流程
+                                            |----------> 2-1. enqueueUpdate(fiberRoot.current, update);//更新初始updateQueue队列
+                                            |----------> 2-2. scheduleUpdateOnFiber(fiberRoot.current, lane, eventTime);
+                                            |---------------a. markUpdateLaneFromFiberToRoot(fiberRoot.current, lane) //向上沿途标记更新通道
+                                            |---------------a. ensureRootIsScheduled(fiberRoot, eventTime) // 传fiberRoot参到ensureRootIsScheduled调度更新------内部调度核心perform[Sync|Concurrent]WorkOnRoot(root)回调任务
+    // 核心逻辑：updateContainer方法定义路径：react/packages/react-reconciler/src/ReactFiberReconciler.old.js
     ```
-2. render方法定义路径：react/packages/react-dom/src/client/ReactDOMLegacy.js ----> 内部调用legacyRenderSubtreeIntoContainer 为render的1级核心方法 --> 方法内部再下面：
-  1. 先legacyCreateRootFromDOMContainer初始化fiberRoot应用根节点
+2. render方法定义路径：react/packages/react-dom/src/client/ReactDOMLegacy.js ----> 内部调用legacyRenderSubtreeIntoContainer 为render的1级核心方法 --> 方法内部再下面：2大点
+  1. **初始化3个对象与dom容器关联**：先legacyCreateRootFromDOMContainer初始化fiberRoot应用根节点
       - mount阶段下更改执行上下文为非批量更新执行上下文，确保mount初始挂载可以立即更新，不调度
       消费这个上下文是在后面的 scheduleUpdateOnFiber 中判断执行
-      - 创建fiberRoot对象
-  2. 再调用协调器的 updateContainer----> scheduleUpdateOnFiber调度更新 为render的2级核心方法,该方法任何render相关的API最终都会调用它
+      - 创建ReactDOMRoot对象及fiberRoot对象，rootFiber对象。初始化UpdateQueue
+  2. **最后调用协调器的 updateContainer**----> scheduleUpdateOnFiber调度更新 为render的2级核心方法,该方法任何render相关的API最终都会调用它
       - 先从fiber到root沿途标记lanes
-      - 后调用`performSyncWorkOnRoot`,执行下面2阶段:react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:1074
-  3. [render阶段]: 执行工作循环单元：`performUnitOfWork`：performUnitOfWork react方法：/packages/react-reconciler/src/ReactFiberWorkLoop.old.js
+      - 不经过调度, 直接进行fiber构造
+      - 或者注册调度任务, 经过Scheduler包的调度, 间接进行fiber构造
+
+**fiber构造**：就是调用`performSyncWorkOnRoot`,执行下面2阶段:react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:1074
+  1. [render阶段]: 执行工作循环单元：`performUnitOfWork`：performUnitOfWork react方法：/packages/react-reconciler/src/ReactFiberWorkLoop.old.js
       - beginWork：定义react/packages/react-reconciler/src/ReactFiberBeginWork.old.js：核心是reconcileChildren方法
         - 根据 ReactElement对象即nextChildren(调用组件渲染方法的结果)创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
         - 设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
@@ -725,8 +948,7 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
             1. completeWork函数中: 对于HostRoot类型的节点, 仅初次构造时给HostRoot设置workInProgress.flags |= Snapshot,该标记在commitBeforeMutationEffects阶段处理
       - 这块需要实际例子，整体串联图解下：见 [链接](https://7km.top/main/fibertree-create)
         - performUnitOfWork执行完后，得到了完整的fiber树和DOM树(DOM树在最近一个HostComponent的stateNodeDOM实例里)，在fiber树的根节点上挂载了一串effectList副作用队列
-  4. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitRoot
-3. 核心逻辑：updateContainer方法定义路径：react/packages/react-reconciler/src/ReactFiberReconciler.old.js
+  2. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitRoot
 
 ##### mount阶段
 
@@ -1216,12 +1438,6 @@ export type Hook = {|
   next: Hook | null, // next指针：next指针, 指向链表中的下一个hook
 |};
 ```
-
-### Schedule包的调度器刨析
-
-> 参考https://7km.top/main/scheduler
-
-源码路径在react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js中的 scheduleUpdateOnFiber 方法中的 ensureRootIsScheduled 方法中
 
 ### React的Context原理
 

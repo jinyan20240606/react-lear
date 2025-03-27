@@ -565,16 +565,16 @@ function requestRetryLane(fiber: Fiber) {
 
 /**
  * 统一调度更新：将更新请求添加到 React 的更新队列中，并根据当前的上下文和优先级决定何时处理这些更新
- * 1. 拿到新的fiberRoot节点：从传入的fiber向上追溯到根节点rootFiber以及fiberRoot，标记更新通道lane
+ * 1. 标记更新通道：拿到新的fiberRoot节点：从传入的fiber向上追溯到根节点rootFiber以及fiberRoot，标记更新通道lane
  *    - 这个新的fiberRoot：包含了lane优先级和rootFiber节点上的update对象负载的reactElement树
- * 2. 传fiberRoot参到ensureRootIsScheduled调度更新
+ * 2. 调度更新：传fiberRoot参到ensureRootIsScheduled调度更新
  *    - fiberRoot根实例调度：ensureRootIsScheduled(root, eventTime)  => 调度核心perform[Sync|Concurrent]WorkOnRoot(root)回调任务;
  *        - 执行performSyncWorkOnRoot回调时，就会实际使用这个update对象负载渲染到页面上去
  *    - 调度fiberRoot的pendingInteractions：schedulePendingInteractions(root, lane);
- * @param {*} fiber current级别的实际页面上的触发更新的当前fiber节点
+ * @param {*} fiber fiberRoot.current即HostRootFiber
  */
 export function scheduleUpdateOnFiber(
-  /** current级别的实际页面上的触发更新的当前fiber节点 */
+  /** fiberRoot.current即HostRootFiber */
   fiber: Fiber,
   /** 请求的更新的优先级通道 */
   lane: Lane,
@@ -810,8 +810,8 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
 
   // 调度新的回调任务。
   // 根据新任务的优先级，选择合适的调度方法：
-  // // 同步优先级：使用 scheduleSyncCallback 调度同步任务。
-  // // 同步批量优先级：使用 scheduleCallback 调度即时任务。
+  // // 同步优先级：使用 scheduleSyncCallback 调度为同步任务。
+  // // 同步批量优先级：使用 scheduleCallback 调度为异步任务。
   // // 其他异步类优先级：将车道优先级转换为调度器优先级，使用 scheduleCallback 调度并发任务
   let newCallbackNode; // 回调节点
   if (newCallbackPriority === SyncLanePriority) {

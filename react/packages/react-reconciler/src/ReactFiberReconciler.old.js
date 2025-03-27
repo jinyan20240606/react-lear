@@ -262,7 +262,7 @@ export function createContainer(
  * * * 负载就是当前传入的reactElement元素树，后面调度渲染它
  * 
  * **核心步骤：**
- * 1. 填充rootFiber节点属性：
+ * 1. 填充rootFiber节点属性updateQueue队列：
  *    - 请求一个当前更新通道lane和填充payload负载
  *    - 创建update更新对象并添加到fiber节点的updateQueue队列
  * 2. 把rootFiber根节点传入 -----> 统一调度更新scheduleUpdateOnFiber---- 触发fiberRoot管理的调度更新流程
