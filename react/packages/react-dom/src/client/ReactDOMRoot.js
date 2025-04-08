@@ -133,7 +133,7 @@ ReactDOMRoot.prototype.unmount = ReactDOMBlockingRoot.prototype.unmount = functi
 };
 
 /** 
- * 创建根实例：返回fiberRoot：整个React应用的根
+ * 创建根实例fiberRoot：返回fiberRoot：整个React应用的根
  * 1. 创建根实例
  * 2. 处理react合成事件的委托绑定
  * 

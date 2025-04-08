@@ -436,7 +436,7 @@ export function readContext<T>(
           'inside Hooks like useReducer() or useMemo().',
       );
 
-      // This is the first dependency for this component. Create a new list.
+      // 1. 构造一个contextItem, 加入到 workInProgress.dependencies链表之后
       lastContextDependency = contextItem;
       currentlyRenderingFiber.dependencies = {
         lanes: NoLanes,
@@ -448,5 +448,6 @@ export function readContext<T>(
       lastContextDependency = lastContextDependency.next = contextItem;
     }
   }
+  // 2. 返回 currentValue
   return isPrimaryRenderer ? context._currentValue : context._currentValue2;
 }

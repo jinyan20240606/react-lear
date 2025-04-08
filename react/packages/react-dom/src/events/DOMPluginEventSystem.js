@@ -706,7 +706,7 @@ export function dispatchEventForPluginEventSystem(
 ): void {
   let ancestorInst = targetInst;
   // 如果不是非管理节点且非委托事件
-  debugger;
+  // debugger;
   if (
     (eventSystemFlags & IS_EVENT_HANDLE_NON_MANAGED_NODE) === 0 &&
     (eventSystemFlags & IS_NON_DELEGATED) === 0

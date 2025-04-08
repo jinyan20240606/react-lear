@@ -3219,16 +3219,15 @@ function remountFiber(
 /**
  * beginWork：主要任务是利用current.child和nextCHildren经过协调diff生成workInPropgress的child-fiber子节点
  * 
- * 1. update时：如果current存在，在满足一定优化条件时可以复用current节点，这样就能克隆current.child作为workInProgress.child，而不需要新建workInProgress.child。
-
+ * 1. update时：如果current存在，在满足一定优先级条件时可以复用current节点，这样就能克隆current.child作为workInProgress.child，而不需要新建workInProgress.child。
+ *    - 优先级条件判断参考fiber优先级章节：https://7km.top/main/fibertree-prepare#%E4%BC%98%E5%85%88%E7%BA%A7-lanes
    2. mount时：若current === null。会根据fiber.tag不同，创建不同类型的子Fiber节点
-
    3. 根据 组件render后的ReactElement对象创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
       设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
       设置fiber.stateNode局部状态(如Class类型节点: fiber.stateNode=new Class())
  * 
  * @param {*} current mount时为上次渲染的页面真实rootFiber根节点
- * @param {*} workInProgress mount时为正在处理的rootFiber副本节点----双缓存流程
+ * @param {*} workInProgress mount时为正在处理的内存rootFiber副本节点----双缓存流程
  * @param {*} renderLanes 当前渲染优先级通道
  * @returns 生成好的workInProgress.child
  */
@@ -3261,7 +3260,6 @@ function beginWork(
   if (current !== null) {
     const oldProps = current.memoizedProps;
     const newProps = workInProgress.pendingProps;
-
     if (
       // 如果当前 Fiber 节点存在且有新的属性、上下文变化或类型变化，标记为需要更新
       oldProps !== newProps ||
@@ -3471,7 +3469,7 @@ function beginWork(
   }
 
   // 下面为 update阶段和mount阶段共同走的逻辑
-  // 进入 beginWork 阶段之前，设置当前fiber优先级lanes为NoLanes最高优先级：看来是每个遍历到的fiber节点都会加Nolanes最高优先级
+  // 进入 beginWork 阶段之前，设置当前fiber优先级lanes重置为NoLanes最高优先级：看来是每个遍历到的fiber节点都会加Nolanes最高优先级
   workInProgress.lanes = NoLanes;
   // 处理不同类型的 Fiber 节点
   switch (workInProgress.tag) {

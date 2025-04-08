@@ -3,9 +3,10 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import './index.css';
 // import App from './App';
-import TestClassUpdate from './TestClassUpdate';
+// import TestClassUpdate from './TestClassUpdate';
+import TestHooks from './TestHooks';
 
 // @ts-ignore
 ReactDOM.render(<React.StrictMode>
-  <TestClassUpdate />
+  <TestHooks />
 </React.StrictMode>, document.getElementById('root'));

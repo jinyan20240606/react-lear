@@ -571,10 +571,10 @@ function requestRetryLane(fiber: Fiber) {
  *    - fiberRoot根实例调度：ensureRootIsScheduled(root, eventTime)  => 调度核心perform[Sync|Concurrent]WorkOnRoot(root)回调任务;
  *        - 执行performSyncWorkOnRoot回调时，就会实际使用这个update对象负载渲染到页面上去
  *    - 调度fiberRoot的pendingInteractions：schedulePendingInteractions(root, lane);
- * @param {*} fiber fiberRoot.current即HostRootFiber
+ * @param {*} fiber fiberRoot.current即HostRootFiber|也可能是组件状态更新时class实例对应的fiber节点
  */
 export function scheduleUpdateOnFiber(
-  /** fiberRoot.current即HostRootFiber */
+  /** fiberRoot.current即HostRootFiber或组件状态更新时class实例对应的fiber节点 */
   fiber: Fiber,
   /** 请求的更新的优先级通道 */
   lane: Lane,
@@ -1649,7 +1649,7 @@ export function renderHasNotSuspendedYet(): boolean {
  * 4. 开始执行workLoopSync
  * 
  * @param {*} FiberRoot 当前根节点的 FiberRoot 树
- * @param {*} lanes 需要处理的高优通道
+ * @param {*} lanes 整体render阶段fiber树构造级的把控级优先级
  * @return 渲染完成后的退出状态（RootExitStatus）
  */
 function renderRootSync(root: FiberRoot, lanes: Lanes) {
@@ -1662,7 +1662,7 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
   // 3、检查是否需要准备新的栈
   // 如果fiberRoot变动, 或者update.lane变动, 都会刷新栈帧, 丢弃上一次渲染进度
   if (workInProgressRoot !== root || workInProgressRootRenderLanes !== lanes) {
-    // 刷新栈帧
+    // 刷新栈帧, legacy模式下每次都会进入
     prepareFreshStack(root, lanes);
     // 调度追踪功能：开始处理待处理的交互
     startWorkOnPendingInteractions(root, lanes);
@@ -1835,7 +1835,7 @@ function workLoopConcurrent() {
  * @param {*} unitOfWork WIP的内存fiber节点 首次循环时不管mount还是update阶段，首次workInProgress 值都为顶部根节点rootFiber开始的
  */
 function performUnitOfWork(unitOfWork: Fiber): void {
-  /** 获取当前unitOfWork对应的上次渲染的真实fiber节点 */
+  /** 获取当前unitOfWork对应的上次渲染的页面fiber节点 */
   const current = unitOfWork.alternate;
   // ---调试阶段用
   setCurrentDebugFiberInDEV(unitOfWork);
@@ -2514,7 +2514,9 @@ function commitRootImpl(root, renderPriorityLevel) {
 /**
  * 整体可以分为三部分：
  * 1. 处理DOM节点渲染/删除后的 autoFocus、blur 逻辑。
- * 2. commitBeforeMutationEffectOnFiber方法处理flags:`Snapshot`标记：调用getSnapshotBeforeUpdate生命周期钩子。
+ * 2. commitBeforeMutationEffectOnFiber方法处理flags:`Snapshot`标记：
+ *    - ClassComponent：调用getSnapshotBeforeUpdate生命周期钩子
+ *    - HostRoot：调用clearContainer清空了容器节点(即div#root这个 dom 节点
  * 3. 处理flags:`Passive`标记：以NormalSchedulerPriority调度flushPassiveEffects（对应useEffect）
  *    - 该useEffect标记，会在beginWork-fiber树构造过程中的renderWithHooks中的useEffect函数执行逻辑中会向fiber节点添加fiber-Passive-flags
  *        - 见Hooks章节的mountEffectImpl源码

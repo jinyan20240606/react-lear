@@ -9,9 +9,14 @@
 否则整体流程都不熟，细节你更难看懂
 
 1. [卡颂参考链接](https://react.iamkasong.com/#%E7%AB%A0%E8%8A%82%E5%88%97%E8%A1%A8)
+   1. https://github.com/BetaSu/just-react?tab=readme-ov-file
 2. [图解react](https://7km.top/)
-2. 个人xmind笔记(wps)
-3. [build-your-own-react，构建迷你react，仅几百行代码](https://pomb.us/build-your-own-react/)
+   1. https://github.com/7kms/react-illustration-series?tab=readme-ov-file
+3. 个人xmind笔记(wps)
+4. [build-your-own-react，构建迷你react，仅几百行代码](https://pomb.us/build-your-own-react/)
+
+**TODO**
+1. 待实际调试验证下调度任务的防抖节流功能，多次更新的情况下，调度器的任务队列是否会被多次执行
 
 - [react-learn](#react-learn)
   - [概念经验](#概念经验)
@@ -61,6 +66,7 @@
     - [其他API入手](#其他api入手)
       - [getSnapshotBeforeUpdate](#getsnapshotbeforeupdate)
     - [Hooks源码刨析](#hooks源码刨析)
+      - [hooks的数据结构](#hooks的数据结构)
       - [hook原理概览](#hook原理概览)
         - [Hook 与 Fiber](#hook-与-fiber)
         - [hook分类](#hook分类)
@@ -71,9 +77,9 @@
         - [总结](#总结-1)
       - [状态Hook深入刨析](#状态hook深入刨析)
         - [创建hook](#创建hook)
-        - [状态初始化](#状态初始化)
-        - [状态更新](#状态更新)
-      - [副作用Hook刨析](#副作用hook刨析)
+        - [状态初始化-声明阶段mount](#状态初始化-声明阶段mount)
+        - [状态更新-(调用阶段+声明阶段update)](#状态更新-调用阶段声明阶段update)
+      - [副作用Hook深入刨析](#副作用hook深入刨析)
         - [1. 创建Hook](#1-创建hook)
           - [mount阶段](#mount阶段-1)
         - [2. 处理Effect回调](#2-处理effect回调)
@@ -84,7 +90,6 @@
         - [3. update阶段：更新Hook](#3-update阶段更新hook)
           - [组件销毁](#组件销毁)
       - [极简useState-hook的实现](#极简usestate-hook的实现)
-      - [hooks的数据结构](#hooks的数据结构)
     - [React的Context原理](#react的context原理)
       - [总结](#总结-2)
       - [创建Context](#创建context)
@@ -345,16 +350,39 @@ taskQueue是一个小顶堆数组, 关于堆排序的详细解释, 可以查看R
 > 通过fiber上的lane优先级的灵活运用, React实现了可中断渲染,时间切片(time slicing),异步渲染(suspense)等特性
 
 1. 共有3种优先级模型贯穿于整个react体系。
-    - fiber优先级(LanePriority): 位于react-reconciler包, 也就是Lane(车道模型).
+    - **lanes优先级(LanePriority)**: 位于react-reconciler包, 也就是Lane(车道模型).
       - 18个lane通道定义：packages/react-reconciler/src/ReactFiberLane.js#L74-L103
       - 使用31个比特位来表示
       - 每个lane通道都有对应的优先级所以：18个通道优先级：lanePriority: react/packages/react-reconciler/src/ReactFiberLane.js
-    - 调度优先级(SchedulerPriority): 位于scheduler包.
+      - 细分：
+    - **调度优先级(SchedulerPriority)**: 位于scheduler包.
       - 6大调度优先级Prority：packages/scheduler/src/SchedulerPriorities.js
-    - 优先级等级(ReactPriorityLevel) : 位于react-reconciler包中的SchedulerWithReactIntegration.js, 负责上述 2 套优先级体系的转换.
+    - **优先级等级(ReactPriorityLevel)** : 位于react-reconciler包中的SchedulerWithReactIntegration.js, 负责上述 2 套优先级体系的转换.
       - 协同调度中心(scheduler包)和 fiber 树构造(react-reconciler包)中对优先级的使用, 则需要转换SchedulerPriority和LanePriority, 转换的桥梁正是ReactPriorityLevel
-2. 优先级的使用处：上面3种优先级，应该都是各自模块用到的，fiber优先级用于fiber构造阶段，调度优先级用于调度任务阶段：主要用来控制调度器中 任务调度循环中循环的顺序。优先级等级用于两者兼容转化
-
+2. 各个模块内部优先级的使用场景：上面3种优先级，应该都是各自模块用到的，lanes优先级用于协调器fiber构造阶段，调度优先级用于调度器调度任务阶段：主要用来控制调度器中 任务调度循环中循环的顺序。优先级等级用于两者兼容转化
+   1. react-reconciler包优先级：模块用的fiber优先级lane主要用于3个场景
+      1. Update对象优先级updateLanes
+         1. mount时：updateContainer
+            1. createUpdate(eventTime, lane);
+            2. scheduleUpdateOnFiber(current, lane, eventTime);
+         2. 更新时：classComponentUpdater.enqueueSetState
+            1. createUpdate(eventTime, lane);
+            2. scheduleUpdateOnFiber(current, lane, eventTime);
+      2. 渲染优先级renderLanes
+         1. performSyncWorkOnRoot
+            1. render之前先获取一个优先级：getNextLanes(root: FiberRoot, wipLanes: Lanes)
+               1. 此处返回的lanes会作为**全局渲染的优先级**, 用于fiber树构造过程中. 针对fiber对象或update对象, 只要它们的优先级(如: fiber.lanes和update.lane)比渲染优先级低, 都将会被忽略
+                  1. 例子：beginWork对比更新环节中此代码处`if (!includesSomeLane(renderLanes, u`判断是否复用fiber节点，不更新该fiber
+            2. renderRootSync(root, lanes);
+               1. prepareFreshStack(root, lanes);// 刷新栈帧
+               2. workLoopSync();// 工作循环正式构造fiber树，用到上面这个lanes判断
+      3. fiber优先级fiber.lanes
+         1. workLoopSync();
+            1. while循环单元：performUnitOfWork 
+               1. beginWork(current, unitOfWork, subtreeRenderLanes)的判断更新阶段时要不要复用fiber节点，用到了fiber.lanes
+                  1. 从FiberNode的构造函数中可以看出, fiber.lanes和fiber.childLanes的初始值都为NoLanes, 在fiber树构造过程中, 使用全局的渲染优先级(renderLanes)和fiber.lanes判断fiber节点是否更新(源码地址).
+                    - 如果全局的渲染优先级renderLanes不包括fiber.lanes, 证明该fiber节点没有更新, 可以复用.
+                    - 如果不能复用, 进入创建阶段
 
 ## react17学习
 
@@ -369,6 +397,42 @@ taskQueue是一个小顶堆数组, 关于堆排序的详细解释, 可以查看R
     - 大体看图解理解：effectList链表是子节点靠前，父节点靠后的顺序链接起来的，如先遍历图解示例中的Content fiber节点，递归处理所有子Host类型节点，然后下次遍历到App fiber节点，就跳过了
     - TODO：待实际DEBUGGER一下
 4. FunctionComponentUpdateQueue副作用队列中的 destroy和tag。不同tag的区别，有点模糊。const {destroy, tag} = effect;导致在react/packages/react-reconciler/src/ReactFiberCommitWork.old.js的commitUnmount中根据tag的2种判断逻辑
+5. 状态更新时的问题细节
+    ```js
+    class App extends React.Component {
+      state = {
+        list: ['A', 'B', 'C'],
+      };
+      onChange = () => {
+        this.setState({ list: ['C', 'A', 'X'] });
+      };
+      componentDidMount() {
+        console.log(`App Mount`);
+      }
+      render() {
+        return (
+          <>
+            <Header />
+            <button onClick={this.onChange}>change</button>
+            <div className="content">
+              {this.state.list.map((item) => (
+                <p key={item}>{item}</p>
+              ))}
+            </div>
+          </>
+        );
+      }
+    }
+    /**
+     * 当前App组件改变state触发状态更新时，按状态更新流程是触发setState->scheduleUpdateOnFiber，
+     * 给当前App fiber节点增加更新标记，
+     *  1. 从触发的子组件App节点向上沿途标记更新，最终返回fiberRoot节点供后续使用。
+        2. renderRootSync工作循环时，从目标触发更新的节点开始向下遍历，还是根节点HostRootFiber开始的。？
+            - HostRootFiber：不管是mount还是子组件状态更新时，都会从初始workInProgress值为fiberRoot.current.alternate自顶向下深度优先遍历.(alternate双缓存技术)
+        3. App组件的里某个divfiber节点实际是状态变化发生了更新，时是从Appfiber节点加了Update对象，在render阶段如何处理该div的变化更新呢？
+            - render从根节点自顶向下深度优先遍历，遍历到App节点时，经过beginwork，计算App的render按照最新的state值得到新div-reactElements，然后与页面上的div-fiber，进行diff对比得到新fiber-div节点等待后续渲染。
+     */
+    ```
 
 ### 常见数据结构
 
@@ -488,14 +552,15 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
   this.pendingProps = pendingProps;
   this.memoizedProps = null; // 上次计算好的最终props新值---- pendingProps和memoizedProps比较可以得出属性是否变动.
 
-  // updateQueue 属性在类组件和函数组件中的结构不一样，除了Update更新对象还会都存着各自结构的副作用队列effects。
+  // updateQueue 属性在类组件和函数组件中的结构不一样，除了Update更新对象还会都存着所有副作用hook的effects环形链表。
   // 1. class组件：存生命周期钩子componentDidMount类的副作用队列。组件状态更新产生的 Updates链表 的地方，是以queue为类型保存的 ==== 类型定义：react/packages/react-reconciler/src/ReactUpdateQueue.old.js
-  // 2. 函数组件：存useEffect之类的副作用队列，详见hooks章节
+  // 2. 函数组件：存useEffect之类的副作用队列，详见hooks章节，状态类hook的不会存updateQueue
   // 3. HostComponent: 是数组类型，奇数索引为DOM更新的key，偶数索引为value ---> 这个数组值是completeWork时针对Host类型组件更新的updateQueue值
   this.updateQueue: queue = null; // 存储update更新对象的队列, 每一次发起更新, 都需要在该队列上创建一个update对象。状态更新创建Update链表，然后推入到这个updateQueue，等待再beginWork中处理，处理方法在react/packages/react-reconciler/src/ReactUpdateQueue.old.js:processUpdateQueue
 
   // 保存当前组件状态更新计算后准备更新的state
-  // 类组件存储fiber的状态，函数组件存储hooks链表. 在function类型的组件中, fiber.memoizedState就指向Hook队列(Hook队列保存了function类型的组件状态).
+  // 类组件存储fiber的状态，函数组件存储所有状态hook的hooks链表和副作用hook的hooks链表
+  //    // 对于副作用hook的不仅在此，还将每个hook的effects的连起来的环形链表单独赋值给this.updateQueue属性中
   // 所以classComponent和Hook都不能脱离fiber而存在
   this.memoizedState: hook = null; // processUpdateQueue最新计算后的fiber.updateQueue.baseState同时也赋值给了fiber.memoizedState
 
@@ -580,7 +645,7 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
 ```js
 
 0-触发状态更新（根据场景调用不同方法）
-    |
+    |// 类组件setState或者函数Hooks组件的dispatch触发状态更新后，都是走的下述逻辑
     |
     v
 1-创建Update对象
@@ -706,6 +771,13 @@ export type Fiber = {|
 
 参考下面章节：[#### ReactDOM.render流程](#reactdomrender流程)
 
+在 React 运行时中, fiber树构造位于react-reconciler包.
+
+1. fiber树构造处于协调器架构图中第3 个阶段, 可以通过不同的视角来理解fiber树构造在React运行时中所处的位置:
+   1. 从scheduler调度中心的角度来看, 它是任务队列taskQueue中的一个具体的任务回调(task.callback).
+   2. 从React 工作循环的角度来看, 它属于fiber树构造循环
+2. 开发人员通过编程只能控制ReactElement树的结构, ReactElement树驱动fiber树, fiber树再驱动DOM树, 最后展现到页面上. 所以fiber树的构造过程, 实际上就是ReactElement对象到fiber对象的转换过程
+
 #### 整体数据结构变化
 
 ![fiber树启动时的fiber关系图](./imgs/fiber树启动阶段结构图解.png)
@@ -715,17 +787,17 @@ export type Fiber = {|
 ##### 启动阶段：
 1. 初次构造启动时，页面上只有div#root的容器dom，且children为空
 2. 执行入口渲染方法，且在调用updateContainer之前，内存中创建fiberRoot 对象，并赋值给`div#root._reactRootContainer._internalRoot`与页面容器dom进行了关联。
-    - 同时fiberRoot直接初始化current属性为HostRootFiber:A 节点（作为fiber树的根节点） ---> ***此时页面容器dom里上还是空的***
+    - 同时fiberRoot直接初始化current属性为**HostRootFiber:A 节点**（作为fiber树的根节点） ---> ***此时页面容器dom里上还是空的***
 
 ##### render阶段：
 1. scheduleUpdateOnFiber-performSyncWorkOnRoot-renderRootSync中
-2. prepareFreshStack方法中：会创建HostRootFiber:B 双缓存树的副本节点B，在容器DOM中的存在形式为`HostRootFiber:A.alternate = HostRootFiber:B`
-3. 构造循环workLoopSync方法中：后续组件树-fiber树的构造都是在HostRootFiber:B上进行，在render阶段beginWork+completeWork后完整的fiber树构建完了
-    - 构造完后还会将这个rooFiber:B树会赋值给`fiberRoot.finishedWork`
+2. prepareFreshStack方法中：会创建**HostRootFiber:B 节点** 双缓存树的副本节点B，在容器DOM中的存在形式为`HostRootFiber:A.alternate = HostRootFiber:B`
+3. 构造循环workLoopSync方法中：后续组件树-fiber树的构造都是在**HostRootFiber:B**上进行，在render阶段beginWork+completeWork后完整的fiber树构建完了
+    - 构造完后还会将这个**rooFiber:B**树会赋值给`fiberRoot.finishedWork`
 
 ##### commit阶段
 1. 最终commitRoot-commitMutationEffects阶段方法中：操作完DOM后 ---> ***此时页面容器dom有内容了***
-    - 有内容后同时改变指针：将`fiberRoot.current`指针指向`fiberRoot.finishedWork`：此时HostRootFiber:B代表页面上的树，HostRootFiber:A代表fiber备用缓存的树
+    - 有内容后同时改变指针：将`fiberRoot.current`指针指向`fiberRoot.finishedWork`：此时HostRootFiber:B代表页面上的树，**HostRootFiber:A**代表fiber备用缓存的树
     - 此时也形成了页面和内存同时存在的双缓存fiber树，便于后面diff对比时使用两者
 2. 后面update更新时：在`fiberRoot.current.alternate:HostRootFiber:A`上进行构造新fiber树,然后对应地再current指向A，再然后B上构造新树current指向B，... B->A,A->B 这样相互交替达到双缓存更新的效果
 
@@ -784,7 +856,10 @@ export type Fiber = {|
 
 ###### markUpdateLaneFromFiberToRoot
 
+> 这个只对更新阶段有用，用于从触发更新的节点向上追溯到根节点沿途标记更新lane优先级,mount阶段直接就return
+
 图解见 https://7km.top/main/fibertree-update#markupdatelanefromfibertoroot
+
 
 函数主要任务：
 
@@ -889,7 +964,11 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
 > https://7km.top/main/fibertree-commit#%E6%B8%B2%E6%9F%93%E5%89%8D
 > https://react.iamkasong.com/#%E7%AB%A0%E8%8A%82%E5%88%97%E8%A1%A8
 
-自己的代码总结见`[commit阶段]：执行`commitRoot`路径` 本文件全文搜索这块
+自己的代码总结见` [commit阶段]：执行`commitRoot`路径 ` 该章节，本文件全文搜索这块章节
+
+- 这棵将要被渲染的fiber树有 2 个特点:
+  - 副作用队列挂载在根节点上(具体来讲是finishedWork.firstEffect)
+  - 代表最新页面的DOM对象挂载在fiber树中首个HostComponent类型的节点上(具体来讲DOM对象是挂载在fiber.stateNode属性上)
 
 ### 状态更新API入手
 
@@ -914,8 +993,10 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
                                             |---> 2. updateContainer// 2-调用更新入口，进入协调器的更新流程
                                             |----------> 2-1. enqueueUpdate(fiberRoot.current, update);//更新初始updateQueue队列
                                             |----------> 2-2. scheduleUpdateOnFiber(fiberRoot.current, lane, eventTime);
-                                            |---------------a. markUpdateLaneFromFiberToRoot(fiberRoot.current, lane) //向上沿途标记更新通道
-                                            |---------------a. ensureRootIsScheduled(fiberRoot, eventTime) // 传fiberRoot参到ensureRootIsScheduled调度更新------内部调度核心perform[Sync|Concurrent]WorkOnRoot(root)回调任务
+                                            |---------------a. markUpdateLaneFromFiberToRoot(fiberRoot.current, lane) //向上沿途标记更新通道，这个只对更新阶段有用，用于从触发更新的节点向上追溯到根节点沿途标记更新lane优先级
+                                            |---------------b. ensureRootIsScheduled(fiberRoot, eventTime) // 传fiberRoot参到ensureRootIsScheduled调度更新------内部调度核心perform[Sync|Concurrent]WorkOnRoot(root)回调任务
+                                            |------------------a1. performSyncWorkOnRoot(root) // 同步执行performSyncWorkOnRoot
+                                            |------------------a2. performConcurrentWorkOnRoot(root) // 异步执行performConcurrentWorkOnRoot
     // 核心逻辑：updateContainer方法定义路径：react/packages/react-reconciler/src/ReactFiberReconciler.old.js
     ```
 2. render方法定义路径：react/packages/react-dom/src/client/ReactDOMLegacy.js ----> 内部调用legacyRenderSubtreeIntoContainer 为render的1级核心方法 --> 方法内部再下面：2大点
@@ -926,12 +1007,25 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
   2. **最后调用协调器的 updateContainer**----> scheduleUpdateOnFiber调度更新 为render的2级核心方法,该方法任何render相关的API最终都会调用它
       - 先从fiber到root沿途标记lanes
       - 不经过调度, 直接进行fiber构造
-      - 或者注册调度任务, 经过Scheduler包的调度, 间接进行fiber构造
+      - 或者注册调度任务, 经过Scheduler包的调度, 间接进行**fiber构造**`performSyncWorkOnRoot函数调用堆栈如下：`
+        - `lanes = getNextLanes(root, NoLanes);` // 获取渲染优先级
+        - `exitStatus = renderRootSync(root, lanes);` ---> render阶段
+          - `prepareFreshStack(root, lanes);` // 刷新栈帧
+          - `workLoopSync();`// 开启工作循环，从上到下；完成Fiber树的构建
+            - `performUnitOfWork` // while循环单元
+              - `beginWork`
+                - `updateXXXComponent`
+                  - `reconcileChildren:diff算法`
+              - `completeUnitOfWork`
+        - `commitRoot(root);`  ----> commit阶段
+          - `commitBeforeMutationEffects`
+          - `commitMutationEffects`
+          - `commitLayoutEffects`
 
 **fiber构造**：就是调用`performSyncWorkOnRoot`,执行下面2阶段:react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js:1074
   1. [render阶段]: 执行工作循环单元：`performUnitOfWork`：performUnitOfWork react方法：/packages/react-reconciler/src/ReactFiberWorkLoop.old.js
       - beginWork：定义react/packages/react-reconciler/src/ReactFiberBeginWork.old.js：核心是reconcileChildren方法
-        - 根据 ReactElement对象即nextChildren(调用组件渲染方法的结果)创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
+        - 根据 ReactElement对象即nextChildren(调用组件渲染方法的结果)和页面Fiber创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
         - 设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
             - 单元素diff时：会把新单节点统一添加flags为Update，旧节点：添加flags为Deletion,并旧节点添加到returnFiber的effectList链表里
                 - Deletion的细节：正常副作用队列的处理是在completeWork函数, 但是该节点(被删除)会脱离fiber树, 不会再进入completeWork阶段, 所以在beginWork阶段提前加到父节点的副作用队列中
@@ -949,6 +1043,26 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
       - 这块需要实际例子，整体串联图解下：见 [链接](https://7km.top/main/fibertree-create)
         - performUnitOfWork执行完后，得到了完整的fiber树和DOM树(DOM树在最近一个HostComponent的stateNodeDOM实例里)，在fiber树的根节点上挂载了一串effectList副作用队列
   2. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitRoot
+     1. 渲染前：
+        1. 设置全局状态+重置全局变量
+        2. 再次更新副作用队列: 只针对根节点fiberRoot.finishedWork
+     2. commitBeforeMutationEffects: dom 变更之前, 处理副作用队列中带有Snapshot,Passive标记的fiber节点
+        1. Snapshot标记：仅2类型节点
+           1. 仅对于ClassComponent类型节点, 调用了instance.getSnapshotBeforeUpdate生命周期函数
+           2. 仅对于HostRoot类型节点, 调用clearContainer清空了容器节点(即div#root这个 dom 节点).
+        2. Passive标记：仅对Hooks类型节点生效,以NormalSchedulerPriority调度flushPassiveEffects（对应useEffect）
+           1. 借助调度器包：通过scheduleCallback单独注册了一个调度任务task, 等待调度中心scheduler处理
+     3. commitMutationEffects：dom 变更, 界面得到更新. 处理副作用队列中带有ContentReset, Ref, Placement, Update, Deletion, Hydrating标记的fiber节点
+        1. 新增: 函数调用栈 commitPlacement -> insertOrAppendPlacementNode -> appendChild
+        2. 更新: 函数调用栈 commitWork -> commitUpdate
+        3. 删除: 函数调用栈 commitDeletion -> removeChild
+           1. 这些都是react-dom包中的函数，都是直接操作dom，界面得到直接更新
+        4. fiberRoot.current指向代表当前界面的fiber树
+     4. commitLayoutEffects：dom 变更后, 处理副作用队列中带有Update, Callback, Ref标记的fiber节点
+           1. commitLayoutEffectOnFiber->commitLifeCycles
+        1. 对于ClassComponent节点, 调用生命周期函数componentDidMount或componentDidUpdate, 调用update.callback回调函数.
+        2. 对于HostComponent节点, 如有Update标记, 需要设置一些原生状态(如: focus等)
+     5. 渲染后：清除副作用队列+检测更新
 
 ##### mount阶段
 
@@ -1055,6 +1169,78 @@ snap(快照)标记并不只是用来处理getSnapshotBeforeUpdate钩子，如下
     - 对于HostRoot类型节点, 调用clearContainer清空了容器节点(即div#root这个 dom 节点)
 
 ### Hooks源码刨析
+
+1. useState的源码
+   1. 定义在react包里`react/packages/react/src/ReactHooks.js@useState`
+   2. 内核实际是复用的ReactCurrentDispatcher全局变量
+      1. 这个全局变量在beginWork--->updateFunctionComponent--->renderWithHooks中执行组件Component函数前被赋值。
+         1. 代码位置：`react/packages/react-reconciler/src/ReactFiberHooks.old.js`
+2. **统一共识**：声明阶段即useReducer与useState方法的mount阶段和update阶段。调用阶段即点击按钮后，dispatchAction或updateNum被调用时。
+   1. 调用链路：声明阶段mount -----> 调用阶段dispatchAction -----> 声明阶段update
+      1. 声明阶段：
+         1. mount时：创建hook，关联到fiber节点上，初始化memoizedState和queue，baseQueue为null，和dispatch返回
+            1. 代码逻辑见`function mountReducer<S, I, A>(` 全文搜索
+         2. update时：找到对应的hook，根据update计算wipHook的新memoizedState值和baseQueue值并返回，dispatch还是复用mount初始化时的值。
+            1. 具体逻辑见代码注释：`function updateReducer<S, I, A>(` 全文搜索
+            2. **性能优化1**：计算新state时，会判断这个reducer是否与update的eagerReducer一样，一样则直接复用update携带的(调用阶段计算好的)eagerState值
+               1. eagerState是Update级别的，每个Update对象都有一个eagerState属性，且该值只在声明阶段mount时和调用阶段的性能优化时才会赋值，其他默认为null，所以一般非性能优化时不会进入该逻辑
+      2. 调用阶段：调用dispatchAction
+         1. 代码路径：`react/packages/react-reconciler/src/ReactFiberHooks.old.js`下的mountState-->dispatchAction方法
+         2. 创建update对象时，计算eagerState这块也有个**性能优化2**：详见代码注释
+
+#### hooks的数据结构
+
+1. 对于函数组件：有两种不同的updateQueue队列：Hook.queue 和 FunctionComponentUpdateQueue ，具体类型定义看下面 【A】定义处
+    - Hook.queue：主要存储useState，useReducer等状态类钩子的更新队列
+      - Hook对象存在`fiber.memoizedState: Hook | null`属性上
+    - FunctionComponentUpdateQueue：主要存储useEffect，useLayoutEffect等副作用类的更新队列
+      - 这个存在`fiber.updateQueue: FunctionComponentUpdateQueue | null, // 副作用更新队列`
+2. fiber的结构上有一个 memoizedState 属性，用来存放hooks链表（存放不同hook产生的hook对象）
+每个链节点即hook对象上有一个memoizedState属性，用来存放hook的待更新的计算state
+3. 确定Update与queue队列存放位置的对象的数据结构
+    - 类组件中updateQueue队列存放在实例里的，hook组件中UpdateQueue队列直接存放在hook对象上，hook对象以链表形式存放在当前fiber节点中。
+    - hook对象：包含pending属性update链表和 memoizedState(计算后将要更新的state)属性
+    - hook与Update关系区别
+    - 每个useState等hook就对应一个hook对象，用来存该hook的Update链表（相当于类组件中固定的setState这个全局hook对象）
+4. dispatchAction方法：模拟react调度更新流程
+    - 过workInProgressHook变量指向当前正在工作的hook
+    - 触发组件render
+    - 组件render时，再次执行useState方法，并计算最新的state值返回
+
+```js
+// 【A】hook相关数据结构定义在：react/packages/react-reconciler/src/ReactFiberHooks.old.js
+type UpdateQueue<S, A> = {|
+  pending: Update<S, A> | null,
+  dispatch: ((A) => mixed) | null,
+  lastRenderedReducer: ((S, A) => S) | null, // 这个last的值是在声明阶段-mount阶段初始化的-update阶段更新的
+  lastRenderedState: S | null, // 这个last的值是在声明阶段-mount阶段初始化的-update阶段更新的 -----  这个值与Hook.memoizedState相同
+|};
+type Update<S, A> = {|
+  lane: Lane,
+  action: A,
+  eagerReducer: ((S, A) => S) | null,// 该值只在声明阶段mount时和调用阶段的性能优化时才会赋值，其他默认为null
+  eagerState: S | null,// 该值只在声明阶段mount时和调用阶段的性能优化时才会赋值，其他默认为null
+  next: Update<S, A>,
+  priority?: ReactPriorityLevel,
+|};
+export type Hook = {|
+  /**
+   * 1. 状态类hook：该值存储的是当前hook的最新计算后state值
+   * 2. 副作用类hook：该值存储的是当前hook的effect链表
+   */
+  memoizedState: any, // 本次渲染的计算后最终状态
+  /**
+   * 在有遗留更新队列时和没遗留更新时最后都会设成newState值，循环完毕后两种情况设值
+   *    1. 有遗留更新队列时，仅会在第一次遗留时的newState赋值给他，后续遗留时都不会设置（方便下次计算遗留时从此处的状态作为基准开始计算）
+   *    2. 都没有遗留更新队列时：仅即newBaseQueueLast=null时，将最新的newState也会赋值给它
+   * newBaseState最后作为wipHook的baseState值
+   */
+  baseState: any, // 基状态：遗留时的当时计算的newState值，方便下次计算遗留时从此处的状态作为基准开始计算
+  baseQueue: Update<any, any> | null, // 基队列：遗留更新队列（从第一次遗留时后的所有Update队列）
+  queue: UpdateQueue<any, any> | null, // 更新队列：存储update对象的环形链表, 包括所有优先级的update对象，拼接到current.baseQueue后就重置为null了
+  next: Hook | null, // next指针：next指针, 指向链表中的下一个hook
+|};
+```
 
 #### hook原理概览
 
@@ -1174,6 +1360,9 @@ currentHook 与 workInProgressHook: 分别指向current.memoizedState和workInPr
       - 结论可以看到:
           - 以双缓冲技术为基础, 将current.memoizedState按照顺序克隆到了workInProgress.memoizedState中.
           - Hook经过了一次克隆, 内部的queue属性(hook.memoizedState等)都没有变动, 所以其状态并不会丢失
+            - next指针重置为null，workInProgress.memoizedState在renderWithHooks阶段提前重置为null，workInProgress.updateQueue = null;
+    - 克隆方式为：update阶段组件函数重新执行时，克隆主要发生在(每个hook函数内部执行的updateWorkInProgressHook获取hook方法)，每执行一个hook都会向currentHook进行克隆，并链接wipHook的next指针,执行到最后一个hook，所有页面的hook链表也克隆完毕了
+      - 副作用hook也同时把effect链表绑到了wipFiber.updateQueue上
 
 ##### 总结
 
@@ -1208,7 +1397,7 @@ dispatch实际上会调用reducer函数lastRenderedReducer.
 
 可见mountState是mountReducer的一种特殊情况, 即useState也是useReducer的一种特殊情况, 也是最简单的情况
 
-##### 状态初始化
+##### 状态初始化-声明阶段mount
 
 在useState(initialState)函数内部, 设置hook.memoizedState = hook.baseState = initialState;, 初始状态被同时保存到了hook.baseState,hook.memoizedState中.
 
@@ -1216,15 +1405,21 @@ hook.memoizedState: 当前状态
 hook.baseState: 基础状态, 作为合并hook.baseQueue的初始值(下文介绍).
 最后返回[hook.memoizedState, dispatch], 所以在function中使用的是hook.memoizedState.
 
-##### 状态更新
+##### 状态更新-(调用阶段+声明阶段update)
 
-详见图解：https://7km.top/main/hook-state
-
-1. 状态更新触发条件：首先点击是button, 通过dispatch函数进行更新, dispatch实际就是dispatchAction
+详见图解：https://7km.top/main/hook-stat
+1. 调用阶段：状态更新触发条件：首先点击是button, 通过dispatch函数进行更新, dispatch实际就是dispatchAction
   - dispatch方法定义在queue.dispatch保存：react/packages/react-reconciler/src/ReactFiberHooks.old.js@mountState 和 mountReducer, 中创建dispatchAction赋值给queue.dispatch
-  - dispatch产生了多个更新对象, 并放入hook.queue.pending中，此时页面中currentHook也会同步更新这个新的queue环行链表
-      - 因为@mountState中queue这个常量同时赋值给了wip.memoizedState.queue 和 传入了dispatchAction这个闭包函数中，使得页面commit渲染后，dispatchAction闭包依旧能够读写这个queue常量对象---> 所以会同步更新
-2. 详见 updateReducer 函数注释：react/packages/react-reconciler/src/ReactFiberHooks.old.js
+  - dispatch整体逻辑
+    - 创建更新对象，将更新对象添加到wipFiberHook的queue.pending更新队列中
+      - dispatch新建更新对象, 并放入hook.queue.pending中，此时页面中currentHook也会同步更新这个新的queue环行链表
+        - 因为@mountState中queue这个常量同时赋值给了wip.memoizedState.queue 和 传入了dispatchAction这个闭包函数中，使得页面commit渲染后，dispatchAction闭包依旧能够读写这个queue常量对象---> 所以会同步更新
+    - 渲染中渲染处理
+      - 场景：render阶段组件执行时触发新轮渲染，如果不针对处理，回死循环 `function App(){const [state,setState]=useState(2);setState(22);return <div>{state</div>}`
+    - 非渲染中渲染处理
+      - 性能优化:详见代码注释部分
+      - 用 scheduleUpdateOnFiber 来调度更新
+2. 声明阶段update：详见 updateReducer 函数注释：react/packages/react-reconciler/src/ReactFiberHooks.old.js
   - 主要任务：找到对应的hook，根据update计算该hook的新state并返回
       - 调用updateWorkInProgressHook从currentHooks链表克隆当前wipHook对象
       - 链表拼接: 将queue.pending同步到currentHook的baseQueue，两个fiber的queue.pengding同时变成null
@@ -1240,7 +1435,7 @@ hook.baseState: 基础状态, 作为合并hook.baseQueue的初始值(下文介�
           - 当连续dispatch时React 不会再尝试立即计算 eagerState，而是将更新添加到现有的队列中，并等待所有更新一起被处理，因为多个更新可能会相互依赖，提前计算某一个更新的状态值可能不会反映最终的真实状态。例如，如果在同一个事件循环中有两次连续的 setCount(count + 1) 操作，那么单独处理每个更新会导致不准确的状态变化（比如从 1 变成 2 再变成 3），而实际上应该是一次性从 1 变成 3
   - 异步更新：主要是baseQueue，baseState的应用
 
-#### 副作用Hook刨析
+#### 副作用Hook深入刨析
 
 > 参考链接：https://7km.top/main/hook-effect
 
@@ -1312,7 +1507,7 @@ commitLayoutEffects
 
 第三阶段: dom 变更后
 
-调用关系: commitLayoutEffects->commitLayoutEffectOnFiber(commitLifeCycles)->commitHookEffectListMount
+调用关系: commitLayoutEffects->commitLayoutEffectOnFiber->commitLifeCycles->commitHookEffectListMount
 
 定义：react/packages/react-reconciler/src/ReactFiberCommitWork.old.js@schedulePassiveEffects
 
@@ -1347,11 +1542,18 @@ commitMutationEffects 和 commitLayoutEffects 2 个函数, 带有**Layout标记*
 在更新过程中useEffect对应源码updateEffect, useLayoutEffect对应源码updateLayoutEffect. 它们内部都会调用updateEffectImpl, 与初次创建时一样, 只是参数不同
 
 - 主要关注 updateEffectImpl 函数逻辑
-    - react/packages/react-reconciler/src/ReactFiberHooks.old.js@updateEffectImpl
-    - 更新 Effect
-      - 获取hook，创建Effect对象入全局数组
-    - 处理 Effect：也是在commit阶段处理
-      - 新的hook以及新的effect创建完成之后, 余下逻辑与初次渲染完全一致. 处理 Effect 回调时也会根据effect.tag进行判断: 只有effect.tag包含HookHasEffect时才会调用effect.destroy和effect.create()
+    - 代码路径：`react/packages/react-reconciler/src/ReactFiberHooks.old.js@updateEffect->updateEffectImpl`
+    - update阶段的useEffect实际定义,主要做2件事
+       * 1. 获取当前hook
+           * 这块需要回顾下更新阶段的fiber树构造的renderWithHook方法逻辑及hook链表的克隆过程
+               * `#### hook原理概览` 这个章节
+               * 更新阶段时：会克隆current的hook的状态属性，hook的next指针重置为null，workInProgress.memoizedState在renderWithHooks阶段提前重置为null，workInProgress.updateQueue = null;
+                 * 这块博客里图解有个错误，依赖未变的effect直接pushEffect，直接复用currentHook的effect对象，他的effectTag标记还是复用的current的，只有在updateQueue中的effect才是最新的不带HookHasEffect标记的，后续调用时也只会遍历updateQueue
+       * 2. 分析页面currentHook和wipHook的依赖是否改变，创建Effect对象存入全局数组
+           * 不管改不改变，都会创建新effect对象，只不过不变的不会加HookHasEffect标记，都要push到wipFiber的updateQueue队列上
+
+- 处理 Effect时机：也是在commit阶段处理
+  - 新的hook以及新的effect创建完成之后, 余下逻辑与初次渲染完全一致. 处理 Effect 回调时也会根据effect.tag进行判断: 只有effect.tag包含HookHasEffect时才会调用effect.destroy和effect.create()
 
 ###### 组件销毁
 
@@ -1387,56 +1589,6 @@ function useState(initialState) {
 
   return [baseState, dispatchAction.bind(null, hook.queue)];
 }
-```
-
-#### hooks的数据结构
-
-1. 对于函数组件：有两种不同的updateQueue队列：Hook.queue 和 FunctionComponentUpdateQueue ，具体类型定义看下面 【A】定义处
-    - Hook.queue：主要存储useState，useReducer等状态类钩子的更新队列
-      - Hook对象存在`fiber.memoizedState: Hook | null`属性上
-    - FunctionComponentUpdateQueue：主要存储useEffect，useLayoutEffect等副作用类的更新队列
-      - 这个存在`fiber.updateQueue: FunctionComponentUpdateQueue | null, // 副作用更新队列`
-2. fiber的结构上有一个 memoizedState 属性，用来存放hooks链表（存放不同hook产生的hook对象）
-每个链节点即hook对象上有一个memoizedState属性，用来存放hook的待更新的计算state
-3. 确定Update与queue队列存放位置的对象的数据结构
-    - 类组件中updateQueue队列存放在实例里的，hook组件中UpdateQueue队列直接存放在hook对象上，hook对象以链表形式存放在当前fiber节点中。
-    - hook对象：包含pending属性update链表和 memoizedState(计算后将要更新的state)属性
-    - hook与Update关系区别
-    - 每个useState等hook就对应一个hook对象，用来存该hook的Update链表（相当于类组件中固定的setState这个全局hook对象）
-4. dispatchAction方法：模拟react调度更新流程
-    - 过workInProgressHook变量指向当前正在工作的hook
-    - 触发组件render
-    - 组件render时，再次执行useState方法，并计算最新的state值返回
-
-```js
-// 【A】hook相关数据结构定义在：react/packages/react-reconciler/src/ReactFiberHooks.old.js
-type UpdateQueue<S, A> = {|
-  pending: Update<S, A> | null,
-  dispatch: ((A) => mixed) | null,
-  lastRenderedReducer: ((S, A) => S) | null,
-  lastRenderedState: S | null, // 这个值与Hook.memoizedState相同
-|};
-type Update<S, A> = {|
-  lane: Lane,
-  action: A,
-  eagerReducer: ((S, A) => S) | null,
-  eagerState: S | null,
-  next: Update<S, A>,
-  priority?: ReactPriorityLevel,
-|};
-export type Hook = {|
-  memoizedState: any, // 本次渲染的计算后最终状态
-  /**
-   * 在有遗留更新队列时和没遗留更新时最后都会设成newState值，循环完毕后两种情况设值
-   *    1. 有遗留更新队列时，仅会在第一次遗留时的newState赋值给他，后续遗留时都不会设置（方便下次计算遗留时从此处的状态作为基准开始计算）
-   *    2. 都没有遗留更新队列时：仅即newBaseQueueLast=null时，将最新的newState也会赋值给它
-   * newBaseState最后作为wipHook的baseState值
-   */
-  baseState: any, // 基状态：遗留时的当时计算的newState值，方便下次计算遗留时从此处的状态作为基准开始计算
-  baseQueue: Update<any, any> | null, // 基队列：遗留更新队列（从第一次遗留时后的所有Update队列）
-  queue: UpdateQueue<any, any> | null, // 更新队列：存储update对象的环形链表, 包括所有优先级的update对象，拼接到current.baseQueue后就重置为null了
-  next: Hook | null, // next指针：next指针, 指向链表中的下一个hook
-|};
 ```
 
 ### React的Context原理

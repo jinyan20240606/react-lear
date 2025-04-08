@@ -400,7 +400,7 @@ function commitHookEffectListMount(tag: number, finishedWork: Fiber) {
 }
 
 /**
- * 针对函数组件的wipFiber.updateQueue:FunctionComponentUpdateQueue存的Effect对象链表遍历
+ * 针对函数组件的wipFiber.updateQueue:FunctionComponentUpdateQueue存着的当前fiber节点下(所有hook的)所有Effect对象链表遍历
  * 
  * 把带有Passive标记的effect筛选出来(由useEffect创建), 添加到一个全局数组(pendingPassiveHookEffectsUnmount和pendingPassiveHookEffectsMount).
  * 

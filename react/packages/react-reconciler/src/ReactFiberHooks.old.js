@@ -580,19 +580,13 @@ function mountWorkInProgressHook(): Hook {
 }
 
 /**
- * update_diff对比期间：随着begin的递式创建或复用子fiber逻辑同时也更新子fiber对应hooks链表中的当前hook节点是哪个 ===> 赋给currentHook和workInProgressHook的 全局变量值
+ * ## update阶段-克隆页面级Hooks链表：克隆current中的对应fiber节点的对应hook链表的某个hook节点到wipFiber的新hooks链表中
  * 
- * 逻辑见图解：https://7km.top/main/hook-summary  --- 就是update时，克隆current中的对应fiber节点的hooks链表到wipFiber的新hooks链表
+ * 逻辑见图解：https://7km.top/main/hook-summary
  * 
- * updateWorkInProgressHook函数逻辑简单:
-      - 由于renderWithHooks函数中每次调用function前设置了workInProgress.memoizedState=null（memoizedState就是wipHook链表）, 
-          - 所以workInProgressHook初始值必然为null, 只能从currentHook克隆.
-      - 而从currentHook克隆而来的newHook.next=null, 进而导致workInProgressHook链表需要完全重建
-      - 结论可以看到:
-          - 以双缓冲技术为基础, 将current.memoizedState按照顺序克隆到了workInProgress.memoizedState中.
-          - Hook经过了一次克隆, 内部的queue属性(hook.memoizedState等)都没有变动, 所以其状态并不会丢失
+ * updateWorkInProgressHook函数逻辑简单:全局搜`##### 调用function`
 
-    @return 返回值 wipFiber的hooks链表中克隆currentFiberHooks的下一个的对应hook节点：workInProgressHook 和 对应的currentHook
+    @return 返回值 workInProgressHook克隆的当前hook
  */
 function updateWorkInProgressHook(): Hook {
   // 1- 确定nextCurrentHook
@@ -717,10 +711,13 @@ function mountReducer<S, I, A>(
  *
  * updateReducer函数,一句话：找到对应的hook，根据update链表计算该hook的新state并返回
  * - 调用updateWorkInProgressHook获取workInProgressHook对象
- * - 链表拼接: 将 hook.queue.pending 拼接到 currentHook.baseQueue（不是workInProgressHook即wipHook的baseQueue），hook.queue和currentHook.queue都会重置为null
- * - 计算更新wip hook的memoizedState，baseQueue，baseState值并返回：循环遍历上一步生成的currentHook.baseQueue存储的update链表-状态计算
- *    - update优先级不够: 拼接到wipHook的baseQueue 中, 等待下一次 render不计算状态 （判断优先级跳过为了实现异步可中断渲染）
- *    - update优先级足够: 拼接到wipHook的baseQueue中，计算状态合并
+ * - 链表拼接: 将 hook.queue.pending 拼接到 currentHook.baseQueue（不是workInProgressHook即wipHook的baseQueue）
+ *    - 为什么要拼接到页面级current的baseQueue中？
+ *      - 因为上次渲染可能遗留剩余的baseQueue，所以本次新的update队列需要与上次的合并到一起计算最终值。
+ *    - hook.queue和currentHook.queue拼接完后会重置为null
+ * - 计算更新wip hook的memoizedState，baseQueue，baseState值并返回：循环遍历上一步生成的currentHook.baseQueue存储的update链表-memoizedState计算
+ *    - update优先级不够: 拼接到wipHook的baseQueue 中, 等待下一次 render不计算到memoizedState状态 （判断优先级跳过为了实现异步可中断渲染）
+ *    - update优先级足够: 拼接到wipHook的baseQueue中，合并计算到memoizedState状态
  *    - 更新属性
  * @returns 函数返回值：return [wipHook.memoizedState, wipHook.queue.dispatch];
  */
@@ -801,6 +798,7 @@ function updateReducer<S, I, A>(
     do {
       // 4.1 优先级提取update
       const updateLane = update.lane;
+      // 判断当前update的优先级是否处于渲染优先级范围中，若不是则为优先级不够等待下次计算
       if (!isSubsetOfLanes(renderLanes, updateLane)) {
         // 优先级不够: 留下来继续拼接到到wipHook的baseQueue中即存储的newBaseQueueFirst, 等待下一次render，不进行状态计算
         const clone: Update<S, A> = {
@@ -843,7 +841,7 @@ function updateReducer<S, I, A>(
           newBaseQueueLast = newBaseQueueLast.next = clone;
         }
 
-        // 性能优化: 如果存在 update.eagerReducer, 直接使用update.eagerState.避免重复调用reducer
+        // 性能优化: 如果update.eagerReducer与reducer相等无新变化, 直接使用update.eagerState.避免重复调用reducer
         if (update.eagerReducer === reducer) {
           newState = ((update.eagerState: any): S);
         } else {
@@ -1343,7 +1341,7 @@ function mountEffectImpl(fiberFlags, hookFlags, create, deps): void {
  * update阶段的useEffect实际定义
  * 
  * 1. 获取当前hook
- * 2. 分析依赖是否改变，创建Effect对象存入全局数组
+ * 2. 分析页面currentHook和wipHook的依赖是否改变，创建Effect对象存入全局数组
  * @param {*} fiberFlags
  * @param {*} hookFlags
  * @param {*} create
@@ -1428,6 +1426,8 @@ function updateEffect(
       warnIfNotCurrentlyActingEffectsInDEV(currentlyRenderingFiber);
     }
   }
+  console.log('进入Hooks流程的useEffect的update阶段了=======');
+  debugger;
   return updateEffectImpl(
     UpdateEffect | PassiveEffect,
     HookPassive,
@@ -1814,7 +1814,14 @@ function rerenderOpaqueIdentifier(): OpaqueIDType | void {
 }
 
 /**
- * dispatch函数触发时一共4步逻辑：主要第4-1调用queue中的reducer函数
+ * dispatch函数触发时一共4步逻辑：
+ *  1. 创建更新对象
+ *  2. 将更新对象添加到currentFiberHook的queue.pending更新队列中
+ *  3. 渲染中渲染处理
+ *      - 场景：render阶段组件执行时触发新轮渲染，如果不针对处理，回死循环 `function App(){const [state,setState]=useState(2);setState(22);return <div>{state</div>}`
+ *  4. 非渲染中渲染处理：此时fiber的queue应该是current级别的
+ *      - 性能优化
+ *      - 用 scheduleUpdateOnFiber 来调度更新
  * @param {*} fiber 当前正在渲染的 Fiber 节点
  * @param {*} queue 更新队列，保存了所有针对特定状态的更新操作。
  * @param {*} action 用户提供的动作action
@@ -1864,7 +1871,9 @@ function dispatchAction<S, A>(
   /** 获取current页面上的fiber */
   const alternate = fiber.alternate;
   if (
-    // 检查当前是否处于渲染中渲染阶段（如当前正在渲染中呢传进来的fiber就是wipFiber，触发dispatch时wipFiber还没有渲染完就会导致fiber===currentlyRenderingFiber）
+    // 检查当前是否处于渲染中渲染阶段（如当前正在渲染中呢传进来的fiber就是wipFiber
+    // 触发dispatch时wipFiber还没有渲染完就会导致fiber===currentlyRenderingFiber
+    // 一般情况下，fiber不等于currentlyRenderingFiber，render阶段完毕后currentlyRenderingFiber置为null
     fiber === currentlyRenderingFiber ||
     (alternate !== null && alternate === currentlyRenderingFiber)
   ) {
@@ -1876,19 +1885,21 @@ function dispatchAction<S, A>(
   // 4. 非渲中渲阶段更新的处理
   else {
     if (
-      // 下面这个if判断, 能保证当前创建的update, 是`queue.pending`中第一个`update`. 为什么? 发起更新之后fiber.lanes会被改动(可以回顾`fiber 树构造(对比更新)`章节), 如果`fiber.lanes && alternate.lanes`没有被改动, 自然就是首个update
+      // 下面这个if判断, fiber.lanes === NoLanes意味着目前fiber上不存在update，当前创建的update, 是`queue.pending`中第一个`update`. 为什么? 发起更新之后fiber.lanes会被改动(可以回顾`fiber 树构造(对比更新)`章节), 如果`fiber.lanes && alternate.lanes`没有被改动, 自然就是首个update
       /**
        * 这是性能优化手段具体详见：https://react.iamkasong.com/hooks/usestate.html#%E8%B0%83%E7%94%A8%E9%98%B6%E6%AE%B5
        * fiber.lanes保存fiber上存在的update的优先级。
 
-fiber.lanes === NoLanes意味着fiber上不存在update。
+统一共识：（声明阶段即useReducer与useState方法的mount阶段和update阶段。调用阶段即点击按钮后，dispatchAction或updateNum被调用时。）
 
-我们已经知道，通过update计算state发生在声明阶段(useStateoruseReducer的update阶段的执行函数中)，这是因为该hook上可能存在多个不同优先级的update，最终state的值由多个update共同决定。
+我们已经知道，通过update计算state发生在声明-update阶段，这是因为该hook上可能存在多个不同优先级的update，最终state的值由多个update共同决定。
 
-但是当fiber上不存在update，则调用阶段(disPatchAction的执行函数中)创建的update为该hook上第一个update，在声明阶段计算state时也只依赖于该update，完全不需要进入声明阶段再计算state。
-
-这样做的好处是：如果计算出的state与该hook之前保存的state一致，那么完全不需要开启一次调度。即使计算出的state与该hook之前保存的state不一致，在声明阶段也可以直接使用调用阶段已经计算出的state
-       */
+-------但是当调用阶段(disPatchAction的执行函数中)创建的update为该hook上第一个update时，可以在这里提前计算update对应的新eagerState：
+在声明-update阶段计算state时也只依赖于该update，完全不需要进入声明-update阶段再计算state
+这样做有2个好处是：
+   1. 如果计算出的state与该hook之前保存的state一致，那么完全不需要开启一次调度，避免不必要重渲染
+   2. 即使计算出的state与该hook之前保存的state不一致，在声明阶段也可以直接使用调用阶段已经计算出的state
+*/
       fiber.lanes === NoLanes && // fiber.lanes：为 NoLanes（没有其他待处理的更新）
       (alternate === null || alternate.lanes === NoLanes)
     ) {
@@ -1904,10 +1915,7 @@ fiber.lanes === NoLanes意味着fiber上不存在update。
         try {
           const currentState: S = (queue.lastRenderedState: any);
           const eagerState = lastRenderedReducer(currentState, action);
-          // Stash the eagerly computed state, and the reducer used to compute
-          // it, on the update object. If the reducer hasn't changed by the
-          // time we enter the render phase, then the eager state can be used
-          // without calling the reducer again.
+          // 暂存`eagerReducer`和`eagerState`, 如果在render阶段reducer==update.eagerReducer, 则可以直接使用无需再次计算
           update.eagerReducer = lastRenderedReducer;
           update.eagerState = eagerState;
           // 4.2 如果新旧状态相同，则直接返回，不需要进行调度，否则就调度。

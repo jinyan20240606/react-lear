@@ -24,6 +24,11 @@ export function remove(key) {
   key._reactInternals = undefined;
 }
 
+/**
+ * 一般在react组件实例上添加_reactInternals属性，可直接获取到对应的fiber节点
+ * @param {*} key 
+ * @returns 
+ */
 export function get(key) {
   return key._reactInternals;
 }
