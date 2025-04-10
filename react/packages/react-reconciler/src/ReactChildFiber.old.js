@@ -293,8 +293,8 @@ function ChildReconciler(shouldTrackSideEffects) {
    * 删除fiber节点操作：只是标记不是真的删除fiber树上的节点
    * 1. 更新根节点上的effectList链表
    * 2. 标记当前childToDelete节点flags标记为删除
-   * @param returnFiber: 父 Fiber 节点。
-   * @param childToDelete: 要删除的子 Fiber 节点。
+   * @param returnFiber: 父 Fiber 节点即wipFiber节点。
+   * @param childToDelete: 要删除的子 Fiber 节点即页面级的currentFirstChild。
    */
   function deleteChild(returnFiber: Fiber, childToDelete: Fiber): void {
     // 如果 shouldTrackSideEffects 为 false，则直接返回，不做任何操作
@@ -341,7 +341,7 @@ function ChildReconciler(shouldTrackSideEffects) {
 
   /**
    * 将剩余的oldFiber转成Map：以key|index为key，oldFiber为Value，方便第二轮遍历
-   * @param {*} returnFiber 
+   * @param {*} returnFiber 这个值没用到
    * @param {*} currentFirstChild 
    * @returns 
    */
@@ -370,6 +370,7 @@ function ChildReconciler(shouldTrackSideEffects) {
    * 
    * @param {*} fiber 要复用的目标fiber节点
    * @param {*} pendingProps 新的reactElement元素上的props值
+   * @returns 返回克隆后的新fiber节点
    */
   function useFiber(fiber: Fiber, pendingProps: mixed): Fiber {
     const clone = createWorkInProgress(fiber, pendingProps);
@@ -379,18 +380,23 @@ function ChildReconciler(shouldTrackSideEffects) {
   }
 
   /**
-   * 移动节点判断：
-   * 1. newFiber.alternate存在且判断oldIndex < lastPlacedIndex，小于是需要移动，且添加placement标记，大于等于就不需要移动
-   * 2. newFiber.alternate不存在说明不可复用是插入新节点，直接添加Placement标记
-   * @param {*} newFiber 
+   * ### 仅针对type相同key相同即可复用的current级节点进行移动判断，不能复用的都直接进行增加标记
+   * 
+   * 移动的节点处理：只对newFiber增加Placement标记处理
+   * 
+   * ### - 移动节点判断
+   * 1. 不需要移动的：不添加Placement标记，只更新lastPlacedIndex值
+   * 2. 需要移动的或不可复用即新建的：都只添加Placement标记
+   * @param {*} newFiber 新的子节点 Fiber：可复用或不可复用，一定有值
    * @param {*} lastPlacedIndex 
    * @param {*} newIndex 
-   * @returns 只在不需要移动时，才会改变lastPlacedIndex值为oldIndex
-   * 1. 不需要移动的返回oldIndex:newFiber.alternate.index
+   * @returns 返回最新的lastPlacedIndex值
+   * 1. 不需要移动的返回oldIndex:newFiber.alternate.index上层赋值为新lastPlacedIndex值
+   *    - 只在不需要移动时，才会改变lastPlacedIndex值为oldIndex
    * 2. 需要移动的或不可复用的，都返回未变的lastPlacedIndex
    */
   function placeChild(
-    /** 新的子节点 Fiber */
+    /** 新的子节点 Fiber：可复用或不可复用 */
     newFiber: Fiber,
     /** 上一个放置的子节点的索引 */
     lastPlacedIndex: number,
@@ -410,7 +416,7 @@ function ChildReconciler(shouldTrackSideEffects) {
     if (current !== null) {
       // 判断是否需要移动
       // 如果 oldIndex 小于 lastPlacedIndex，说明需要移动子节点。
-      // 设置 newFiber 的 flags 为 Placement，表示需要移动
+      // 设置 newFiber 的 flags 为 Placement，表示需要移动或新插入
       const oldIndex = current.index;
       if (oldIndex < lastPlacedIndex) {
         // 需要移动
@@ -437,7 +443,8 @@ function ChildReconciler(shouldTrackSideEffects) {
   function placeSingleChild(newFiber: Fiber): Fiber {
     // This is simpler for the single child case. We only need to do a
     // placement for inserting new children.
-    // 标记新节点为“待插入”；alternate为null为不是复用的纯新建的
+    // 标记新节点为“待插入”；更新阶段且alternate为null为不是复用的纯新建的，mount阶段不用加此标记
+    // mount阶段会统一在RootFiber节点增加Placement标记因为所有子元素都要插入
     if (shouldTrackSideEffects && newFiber.alternate === null) {
       newFiber.flags = Placement;
     }
@@ -464,8 +471,10 @@ function ChildReconciler(shouldTrackSideEffects) {
   }
 
   /**
-   * type相同：返回复用的fiber节点
-   * type不同：返回新建的fiber节点，待插入的
+   * - key相同进入此函数：
+   *  type相同：返回复用的fiber节点
+   *  type不同：返回新建的fiber节点，待插入的
+   * - key不管相不相同且当current为null，直接返回新建的fiber节点
    */
   function updateElement(
     returnFiber: Fiber,
@@ -649,7 +658,8 @@ function ChildReconciler(shouldTrackSideEffects) {
   /**
    * 通过 updateSlot 来 diff oldFiber 和新的 child，生成新的 Fiber
    * 
-   * 返回null或可复用的节点或不可复用新创建的节点
+   * 1. key不同，返回null
+   * 2. key相同：type相同复用节点，type不同创建新节点并返回，
    * @returns updateElement的函数结果
    */
   function updateSlot(
@@ -690,7 +700,7 @@ function ChildReconciler(shouldTrackSideEffects) {
                 key,
               );
             }
-            // 返回可复用或新创建的节点
+            // 返回可复用(type相同)或新创建的节点(type不同)
             return updateElement(returnFiber, oldFiber, newChild, lanes);
           }
           // 不同则直接返回null
@@ -737,13 +747,15 @@ function ChildReconciler(shouldTrackSideEffects) {
   /**
    * diff对比，返回可复用的newFiber----
    * 
+   * 跟第一轮遍历逻辑一样：也是直接前置判断key|idx是否相同，不相同直接新建
+   * 
    * 这个需要针对当前newChildren[newIdx]去循环查找所有匹配的oldFiber，为避免循环性能损耗，所以提前转成existingChildren-map结构提升性能
    * @param {*} existingChildren Map结构
    * @param {*} returnFiber 
    * @param {*} newIdx 
    * @param {*} newChild 
    * @param {*} lanes 
-   * @returns updateElement的函数结果
+   * @returns null或复用的fiber或新建的fiber
    */
   function updateFromMap(
     existingChildren: Map<string | number, Fiber>,
@@ -910,10 +922,11 @@ function ChildReconciler(shouldTrackSideEffects) {
     let oldFiber = currentFirstChild;
     /** 记录上次插入节点的旧fiber树中位置，判断节点是否需要移动 */
     let lastPlacedIndex = 0;
-    /** newChildren是数组，newIdx就是遍历数组用的下标 */
+    /** 最长公共序列：newChildren是数组，newIdx就是遍历数组用的下标 */
     let newIdx = 0;
     let nextOldFiber = null;
-    // 第一轮遍历：新老VDOM都是从左边开始遍历，按位比较，如果节点可以复用，那么都往后移一位，否则中止本轮循环
+    // 第一轮遍历：新老VDOM都是从左边开始遍历，按位比较，如果节点可以复用，那么都往后移一位。
+    // 注意：第一轮遍历中，仅当遇到key不同时这一种情况才会提前中途退出遍历，key相同时不管type同不同都会一直遍历完毕。
     for (; oldFiber !== null && newIdx < newChildren.length; newIdx++) {
       // oldFiber的下标大于新的，本轮循环中止
       if (oldFiber.index > newIdx) {
@@ -923,6 +936,8 @@ function ChildReconciler(shouldTrackSideEffects) {
         nextOldFiber = oldFiber.sibling;
       }
       // 通过 updateSlot 来 diff oldFiber 和新的 child，生成新的 Fiber
+      // key不同，返回null
+      // key相同：type相同复用节点，type不同创建新节点并返回
       const newFiber = updateSlot(
         returnFiber,
         oldFiber,
@@ -936,15 +951,14 @@ function ChildReconciler(shouldTrackSideEffects) {
         }
         break;
       }
-      // 如果newFiber存在：
-      // key相同type不同导致不可复用，会将oldFiber标记为DELETION，并继续遍历
-      if (shouldTrackSideEffects) {
+      // 否则key相同，type可能同或不同即newFiber存在：
+      // type不同：newFiber为新创建的节点会将oldFiber标记为DELETION，并继续遍历
+      if (shouldTrackSideEffects) {// 更新阶段
         if (oldFiber && newFiber.alternate === null) {
           deleteChild(returnFiber, oldFiber);
         }
       }
-      // 后面newFiber.alternate不为null的情况，是可复用则继续遍历
-      // 情况1：newChildren与oldFiber同时遍历完，第一轮遍历就完成任务了
+      // type可能相同：newFiber为可复用的节点或不可复用的节点：则继续遍历
       lastPlacedIndex = placeChild(newFiber, lastPlacedIndex, newIdx);
       if (previousNewFiber === null) {
         resultingFirstChild = newFiber;
@@ -953,9 +967,14 @@ function ChildReconciler(shouldTrackSideEffects) {
       }
       previousNewFiber = newFiber;
       oldFiber = nextOldFiber;
+      // 情况1：newChildren与oldFiber同时遍历完，第一轮遍历就完成任务了
+      // 解释：都遍历完了，key都相同，type不管同不同，都对应生成新newFiber值了，diff对比也就完成任务了可直接return
     }
     // 上面第一轮遍历结束后，4种情况:1都遍历完了，2,3一个遍历完一个没遍历完，4都没遍历完
+    
     // ===================================== =============================================
+    // 第二轮遍历：下面234每个情况都算作第二轮遍历
+
     // 情况3：newChildren遍历完，oldFiber没遍历完: oldFiber剩余的都可以放心删除
     if (newIdx === newChildren.length) {
       // We've reached the end of the new children. We can delete the rest.
@@ -984,12 +1003,10 @@ function ChildReconciler(shouldTrackSideEffects) {
     }
 
     // 情况4：newChildren与oldFiber都没遍历完：需要判断移动了
-    // Add all children to a key map for quick lookups.
     const existingChildren = mapRemainingChildren(returnFiber, oldFiber);
     // Keep scanning and use the map to restore deleted items as moves.
-    // 第二轮遍历
     for (; newIdx < newChildren.length; newIdx++) {
-      // diff对比，返回可复用或新创建的newFiber----这个需要针对当前newChildren[newIdx]去循环查找所有匹配的oldFiber，为避免循环性能损耗，所以提前转成map结构提升性能
+      // 与oldFiber对比，生成newFiber节点: 返回可复用或新创建的newFiber----这个需要针对当前newChildren[newIdx]去循环查找所有匹配的oldFiber，为避免循环性能损耗，所以提前转成map结构提升性能
       const newFiber = updateFromMap(
         existingChildren,
         returnFiber,
@@ -998,6 +1015,7 @@ function ChildReconciler(shouldTrackSideEffects) {
         lanes,
       );
       if (newFiber !== null) {
+        // 更新阶段下
         if (shouldTrackSideEffects) {
           // 可复用的节点，alternate为页面已存在节点
           if (newFiber.alternate !== null) {
@@ -1017,6 +1035,8 @@ function ChildReconciler(shouldTrackSideEffects) {
       }
     }
 
+    // 第二轮遍历中newFiber不能复用的节点剩余在existingChildren里，统一进行添加Deletion标记
+    // 更新阶段
     if (shouldTrackSideEffects) {
       existingChildren.forEach(child => deleteChild(returnFiber, child));
     }
@@ -1329,6 +1349,7 @@ function ChildReconciler(shouldTrackSideEffects) {
             break;
           }
         }
+        // 解释：这块有个缺点：仅判断第一个元素类型key相同type不同时，就直接跳出循环了，万一后面的存在key相同type相同的节点给放到靠后的位置那也不能利用上了
         // 代码执行到这里代表：key相同但是type不同
         // 将该fiber及其兄弟fiber标记为删除
         deleteRemainingChildren(returnFiber, child);
@@ -1410,9 +1431,12 @@ function ChildReconciler(shouldTrackSideEffects) {
    * 主要是协调nextchidlren进行diff对比，高效更新，计算生成子fiber节点（returnFiber的child值）
    * 
    * 1. 对于children是单个一级子元素：主要执行 reconcileSingleXXXElement 方法
+   *    - 代表同级只有一个节点
    * 2. 对于children是多个一级子元素：主要执行 reconcileChildrenArray
+   *    - 代表同级有多个节点
    * 3. 删除标记的会加到workInProgress的effectList链表里，插入的更新的只加flags标记（后续在completeWork中会统一将flags标记的fiber节点追加到加到父节点的effectList链表里，一直追到rootFiber）
    * 4. 每个fiber节点都会对应加上flags标记
+   *    - diff这里，只会新增2种标记：Deletion和Placement
    * @param {*} returnFiber workInProgress
    * @param {*} currentFirstChild 
    * @param {*} newChild 上层传入的nextChildren

@@ -261,7 +261,7 @@ export function resolveLazyComponentTag(Component: Function): WorkTag {
  * 2. 双缓存是缓存fiberRoot的rootFiber根节点开始。rootFiber的alternate值就是缓存的另一份B版rootFiber
  * B版rootFiber节点取名字叫做全局变量WIP(workInProgress)
  * 
- * @param {*} current fiberRoot.current 即rootFiber根节点
+ * @param {*} current 要复用的目标fiber节点。如fiberRoot.current 即rootFiber根节点
  * @param {*} pendingProps 挂载时为null
  * @returns 返回WIP fiber
  */

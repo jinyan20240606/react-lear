@@ -581,13 +581,11 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
    */
   // flags 标记，在beginWork和completeWork都可能会设置。对fiber节点到commit阶段的DOM操作标记：增删改等
   this.flags = Flags; // 定义：react/packages/react-reconciler/src/ReactFiberFlags.js
+  // 注意：在17版本后没有this.effectTag这个属性了，统一用flags来代替了
   this.subtreeFlags = Flags;
-  // reconcileChildFibers更新阶段会为生成的Fiber节点带上effectTag属性，而mount阶段mountChildFibers不会，
-  // 在mount时只有rootFiber会赋值Placement effectTag，在commit阶段只会执行一次插入操作
-  this.effectTag = NoEffect; // 这个是针对于单个fiber节点上要副作用的标记类型，如Update标记，Placement标记
   // 这个链表一般针对于rootFiber根节点上：存储effectList链表的，commit阶段只要遍历这个链表，即可完成渲染dom,
   this.nextEffect = null; // 链表链接的是fiber节点类型
-  this.firstEffect = null;
+  this.firstEffect = null; 
   this.lastEffect = null;
 
   // 调度优先级相关
@@ -668,7 +666,7 @@ function FiberNode(// fiber类型声明：react/packages/react-reconciler/src/Re
       |剪掉queue.share.pending单项环状链表，并赋值给queue.baseUpdate
       |依据queue.baseUpdate和queue.baseState计算新的state赋值给fiber.memoizedState
     |completeWork阶段
-      |创建effect链表即effectTag
+      |创建effect链表，将fiber节点的flags赋值给effect链表
     v
 3-2-commit阶段（`commitRoot`）
     |
@@ -1026,22 +1024,24 @@ completeUnitOfWork(unitOfWork)函数(源码地址)在初次创建和对比更新
   1. [render阶段]: 执行工作循环单元：`performUnitOfWork`：performUnitOfWork react方法：/packages/react-reconciler/src/ReactFiberWorkLoop.old.js
       - beginWork：定义react/packages/react-reconciler/src/ReactFiberBeginWork.old.js：核心是reconcileChildren方法
         - 根据 ReactElement对象即nextChildren(调用组件渲染方法的结果)和页面Fiber创建所有的子fiber节点, 最终构造出fiber树形结构(设置return和sibling指针)
+          - 创建或复用出新子fiber时，都会先重置flags和firstEffect链表的
         - 设置fiber.flags(二进制形式变量, 用来标记 fiber节点 的增,删,改状态, 等待completeWork阶段处理)
             - 单元素diff时：会把新单节点统一添加flags为Update，旧节点：添加flags为Deletion,并旧节点添加到returnFiber的effectList链表里
                 - Deletion的细节：正常副作用队列的处理是在completeWork函数, 但是该节点(被删除)会脱离fiber树, 不会再进入completeWork阶段, 所以在beginWork阶段提前加到父节点的副作用队列中
-            - 多元素diff时：会在[placeChild方法](react/packages/react-reconciler/src/ReactChildFiber.old.js)添加插入flags
+            - 多元素diff时：会在[placeChild方法](react/packages/react-reconciler/src/ReactChildFiber.old.js)添加插入flags：Placement
         - 设置fiber.stateNode局部状态(如Class类型节点: fiber.stateNode=new Class())
       - completeWork：定义在react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js 的completeUnitOfWork方法
         - 该方法主要针对Host类型fiber节点处理逻辑，更新dom，updateQueue和事件，其他类型没有特殊逻辑
         - 添加一些flags标记：
             - 类组件，函数组件fiber节点一般不做任何逻辑处理
             - HostRoot：mount阶段：添加flags为snapshot 快照标记，和ref标记，update阶段：几乎没有逻辑
-            - HostComponent：主要添加flags为Update标记 和ref标记，更新updateQueue为数组
-        - 最终会追加effectList链表到根节点
+            - HostComponent：对oldProps与newProps比较得知，主要添加flags为Update标记 和ref标记，更新updateQueue为数组
+        - 最终会将带flags标记的追加effectList链表到根节点
         - 细节
             1. completeWork函数中: 对于HostRoot类型的节点, 仅初次构造时给HostRoot设置workInProgress.flags |= Snapshot,该标记在commitBeforeMutationEffects阶段处理
       - 这块需要实际例子，整体串联图解下：见 [链接](https://7km.top/main/fibertree-create)
         - performUnitOfWork执行完后，得到了完整的fiber树和DOM树(DOM树在最近一个HostComponent的stateNodeDOM实例里)，在fiber树的根节点上挂载了一串effectList副作用队列
+          - effectList队列用firstEffect来链接，fiber带flags和firstEffect的会被添加到父级effectList链表
   2. [commit阶段]：执行`commitRoot`路径：react/packages/react-reconciler/src/ReactFiberWorkLoop.old.js@commitRoot
      1. 渲染前：
         1. 设置全局状态+重置全局变量
@@ -1548,7 +1548,7 @@ commitMutationEffects 和 commitLayoutEffects 2 个函数, 带有**Layout标记*
            * 这块需要回顾下更新阶段的fiber树构造的renderWithHook方法逻辑及hook链表的克隆过程
                * `#### hook原理概览` 这个章节
                * 更新阶段时：会克隆current的hook的状态属性，hook的next指针重置为null，workInProgress.memoizedState在renderWithHooks阶段提前重置为null，workInProgress.updateQueue = null;
-                 * 这块博客里图解有个错误，依赖未变的effect直接pushEffect，直接复用currentHook的effect对象，他的effectTag标记还是复用的current的，只有在updateQueue中的effect才是最新的不带HookHasEffect标记的，后续调用时也只会遍历updateQueue
+                 * 这块博客里图解有个错误，依赖未变的effect直接pushEffect，直接复用currentHook的effect对象，他的effect.tag标记还是复用的current的，只有在updateQueue中的effect才是最新的不带HookHasEffect标记的，后续调用时也只会遍历updateQueue
        * 2. 分析页面currentHook和wipHook的依赖是否改变，创建Effect对象存入全局数组
            * 不管改不改变，都会创建新effect对象，只不过不变的不会加HookHasEffect标记，都要push到wipFiber的updateQueue队列上
 
