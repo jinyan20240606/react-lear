@@ -3,6 +3,12 @@
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
+ * 
+ * peek函数: 查看堆的顶点, 也就是优先级最高的task或timer.
+   pop函数: 将堆的顶点提取出来, 并删除顶点之后, 需要调用siftDown函数向下调整堆.
+   push函数: 添加新节点, 添加之后, 需要调用siftUp函数向上调整堆.
+   siftDown函数: 向下调整堆结构, 保证数组是一个最小堆.
+   siftUp函数: 当尾部插入节点之后, 需要向上调整堆结构, 保证数组是一个最小堆.
  *
  * @flow strict
  */
@@ -13,18 +19,26 @@ type Node = {|
   sortIndex: number,
 |};
 
+/**
+ * 尾部添加新节点, 添加之后, 需要调用`siftUp`函数向上调整堆.
+ * @param {*} heap 
+ * @param {*} node 
+ */
 export function push(heap: Heap, node: Node): void {
   const index = heap.length;
   heap.push(node);
   siftUp(heap, node, index);
 }
 
-/** 获取堆顶：最小值 */
+/** 
+ * 查看堆的顶点, 也就是优先级最高的`task`或`timer`
+*/
 export function peek(heap: Heap): Node | null {
   const first = heap[0];
   return first === undefined ? null : first;
 }
 
+// 将堆的顶点提取出来, 并删除顶点之后, 需要调用`siftDown`函数向下调整堆.
 export function pop(heap: Heap): Node | null {
   const first = heap[0];
   if (first !== undefined) {
@@ -39,6 +53,9 @@ export function pop(heap: Heap): Node | null {
   }
 }
 
+/**
+ * 当插入节点之后, 需要向上调整堆结构, 保证数组是一个最小堆.
+ */
 function siftUp(heap, node, i) {
   let index = i;
   while (true) {
@@ -56,6 +73,13 @@ function siftUp(heap, node, i) {
   }
 }
 
+/**
+ * 向下调整堆结构, 保证数组是一个最小堆.
+ * @param {*} heap 
+ * @param {*} node 
+ * @param {*} i 
+ * @returns 
+ */
 function siftDown(heap, node, i) {
   let index = i;
   const length = heap.length;
