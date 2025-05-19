@@ -1,0 +1,14 @@
+{
+  "name": "babel-prac",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "example": "babel ./test-plugin/index.js --out-file ./test-plugin/compiled.js "
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.27.0",
+    "@babel/core": "^7.26.10",
+    "@babel/types": "^7.27.0"
+  }
+}

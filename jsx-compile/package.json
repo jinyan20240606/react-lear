@@ -1,0 +1,17 @@
+{
+  "name": "jsx-compile",
+  "version": "1.0.0",
+  "description": "> 参考博客https://juejin.cn/post/6959948160525565960",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@babel/cli": "^7.27.0",
+    "@babel/core": "^7.26.10",
+    "@babel/preset-react": "^7.26.3"
+  }
+}
