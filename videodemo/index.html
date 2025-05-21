@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频背景自动取色Demo</title>
+    <script src="https://unpkg.com/autohue.js@1.0.0/dist/autohue.iife.js"></script>
+    <script src="./gaussian.js"></script>
+    <link rel="stylesheet" href="./style.css">
+    <style>
+        .filter-controls {
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        .filter-controls h3 {
+            margin-top: 0;
+        }
+        .filter-group {
+            margin-bottom: 10px;
+        }
+        .filter-group label {
+            display: inline-block;
+            width: 120px;
+        }
+        .filter-group input {
+            width: 60px;
+        }
+        .filter-group span {
+            margin-left: 10px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .filter-buttons {
+            margin-top: 15px;
+        }
+        .filter-buttons button {
+            margin-right: 10px;
+            padding: 5px 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .filter-buttons button:hover {
+            background-color: #45a049;
+        }
+        .filter-buttons button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .filter-preview {
+            display: flex;
+            margin-top: 15px;
+        }
+        .filter-preview canvas {
+            margin-right: 10px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="videoContainer" class="video-container">
+            <video id="videoPlayer" controls></video>
+            <canvas id="videoCanvas" style="display: none;"></canvas>
+        </div>
+        
+        <div class="controls">
+            <label for="videoInput">选择视频文件</label>
+            <input type="file" id="videoInput" accept="video/*">
+            
+            <div class="filter-controls">
+                <h3>高斯滤波设置</h3>
+                <div class="filter-group">
+                    <label for="gaussianEnabled">启用高斯滤波：</label>
+                    <input type="checkbox" id="gaussianEnabled">
+                </div>
+                <div class="filter-group">
+                    <label for="gaussianRadius">滤波半径：</label>
+                    <input type="range" id="gaussianRadius" min="1" max="10" value="2" step="1">
+                    <span id="radiusValue">2</span>
+                    <span>(值越大，模糊程度越高)</span>
+                </div>
+                <div class="filter-group">
+                    <label for="gaussianSigma">Sigma值：</label>
+                    <input type="range" id="gaussianSigma" min="0.5" max="5.0" value="1.0" step="0.1">
+                    <span id="sigmaValue">1.0</span>
+                    <span>(控制高斯分布的形状)</span>
+                </div>
+                <div class="filter-buttons">
+                    <button id="applyFilter">应用滤波</button>
+                    <button id="resetFilter">重置</button>
+                </div>
+                <div class="filter-preview">
+                    <div>
+                        <p>原始图像：</p>
+                        <canvas id="originalPreview" width="200" height="150"></canvas>
+                    </div>
+                    <div>
+                        <p>滤波后图像：</p>
+                        <canvas id="filteredPreview" width="200" height="150"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="img-color-wrap">
+        <style>
+            .img-color-wrap img {
+                height: 350px; 
+            }
+            .img-color-wrap .color-show {
+                height: 100px;
+                width: 200px; 
+            }
+        </style>
+        <p>图片取色算法库对比</p>
+        <img src="https://auto-plugin.github.io/autohue.js/imgs/flower-9221176_1280.jpg" alt="">
+        <div class="color-show right1">右侧1</div>
+        <div class="color-show right2">右侧2</div>
+        <div class="color-show main1">主题色1</div>
+        <div class="color-show main2">主题色2</div>
+    </div>
+    <script>
+        autohue('https://auto-plugin.github.io/autohue.js/imgs/flower-9221176_1280.jpg', { threshold: { primary: 10, left: 1, right: 1 } }).then((res) => {
+            console.log(res)
+            const {top, right, left, bottom} = res.backgroundColor
+            document.querySelector('.color-show.right1').style.background = right
+            document.querySelector('.color-show.right1').style.background = right
+            document.querySelector('.color-show.main1').style.background = res.primaryColor
+
+    })
+    </script>
+    <script src="script.js"></script>
+</body>
+</html>

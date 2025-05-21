@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频背景自动取色Demo (聚类算法版)</title>
+    <link rel="stylesheet" href="./style-cluster.css">
+</head>
+<body>
+    <div class="container">
+        <div id="videoContainer" class="video-container">
+            <video id="videoPlayer" controls></video>
+            <canvas id="videoCanvas" style="display: none;"></canvas>
+            <div class="edge-indicator left"></div>
+            <div class="edge-indicator right"></div>
+            <div class="edge-indicator top"></div>
+            <div class="edge-indicator bottom"></div>
+        </div>
+        
+        <div class="controls">
+            <label for="videoInput">选择视频文件</label>
+            <input type="file" id="videoInput" accept="video/*">
+        </div>
+        
+        <div class="algorithm-info">
+            <h3>聚类算法版本特点：</h3>
+            <ul>
+                <li>使用Lab色彩空间聚类，更符合人眼感知</li>
+                <li>分别提取四边缘区域颜色，实现更精确的背景色</li>
+                <li>自适应性能优化，保持流畅播放体验</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script src="script-cluster.js"></script>
+</body>
+</html>
