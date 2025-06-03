@@ -164,8 +164,14 @@ export interface AutoHueResult {
     const data = imageData.data
     const width = imageData.width
     const height = imageData.height
-    
-    // 收集符合条件的像素点
+
+    /**
+     * 1、收集符合条件的像素点
+     *  - 遍历 imageData 中的所有像素点，使用 condition 函数筛选符合条件的像素。
+        - 跳过透明度为 0 的像素。
+        - 将符合条件的像素的 RGB 值存储在 pixels 数组中。
+        - 如果 pixels 数组为空，直接返回空数组。
+     */
     const pixels: [number, number, number][] = []
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -181,7 +187,8 @@ export interface AutoHueResult {
   
     if (pixels.length === 0) return []
   
-    // 初始簇数估计：基于颜色差异和阈值
+    // 2、初始簇数估计：动态计算k值，使其在合理范围内变化，以适应不同大小的图像处理需求。
+    // 根据像素数量计算初始簇数 k，最小值为 2，最大值为 10。基于颜色差异和阈值
     let k = Math.min(10, Math.max(2, Math.floor(pixels.length / 100)))
     
     // K-means算法实现
@@ -303,6 +310,7 @@ export interface AutoHueResult {
   export default async function colorPicker(imageSource: HTMLImageElement | HTMLVideoElement | string, options?: autoColorPickerOptions): Promise<AutoHueResult> {
     const { maxSize, threshold } = __handleAutoHueOptions(options)
     const img = await loadImage(imageSource)
+    console.time('autohue-kmeans-time');
     // 降采样（最大尺寸 100px，可根据需求调整）
     const imageData = getImageDataFromImage(img, maxSize)
   
@@ -335,7 +343,7 @@ export interface AutoHueResult {
     const rightClusters = clusterPixelsByCondition(imageData, (x, _y) => x >= width - margin, threshold.right)
     rightClusters.sort((a, b) => b.count - a.count)
     const rightColor = rightClusters.length > 0 ? rgbToHex(rightClusters[0].averageRgb) : primaryColor
-  
+    console.timeEnd('autohue-kmeans-time');
     return {
       primaryColor,
       secondaryColor,

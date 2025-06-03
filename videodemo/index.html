@@ -4,9 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>视频背景自动取色Demo</title>
-    <script src="https://unpkg.com/autohue.js@1.0.0/dist/autohue.iife.js"></script>
-    <script src="./gaussian.js"></script>
+    <!-- <script src="https://unpkg.com/autohue.js@1.0.0/dist/autohue.iife.js"></script> -->
+    <script src="./script.js"></script>
     <link rel="stylesheet" href="./style.css">
+    <script src="./autohue-kmeans.ts"></script>
+    <script src="./autohue-duibi.js"></script>
     <style>
         .filter-controls {
             margin: 15px 0;
@@ -124,16 +126,5 @@
         <div class="color-show main1">主题色1</div>
         <div class="color-show main2">主题色2</div>
     </div>
-    <script>
-        autohue('https://auto-plugin.github.io/autohue.js/imgs/flower-9221176_1280.jpg', { threshold: { primary: 10, left: 1, right: 1 } }).then((res) => {
-            console.log(res)
-            const {top, right, left, bottom} = res.backgroundColor
-            document.querySelector('.color-show.right1').style.background = right
-            document.querySelector('.color-show.right1').style.background = right
-            document.querySelector('.color-show.main1').style.background = res.primaryColor
-
-    })
-    </script>
-    <script src="script.js"></script>
 </body>
 </html>

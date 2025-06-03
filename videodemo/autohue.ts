@@ -257,6 +257,7 @@ function __handleAutoHueOptions(options?: autoColorPickerOptions) {
 export default async function colorPicker(imageSource: HTMLImageElement | HTMLVideoElement | string, options?: autoColorPickerOptions): Promise<AutoHueResult> {
   const { maxSize, threshold } = __handleAutoHueOptions(options)
   const img = await loadImage(imageSource)
+  console.time('autohue-time');
   // 降采样（最大尺寸 100px，可根据需求调整）
   const imageData = getImageDataFromImage(img, maxSize)
 
@@ -289,7 +290,7 @@ export default async function colorPicker(imageSource: HTMLImageElement | HTMLVi
   const rightClusters = clusterPixelsByCondition(imageData, (x, _y) => x >= width - margin, threshold.right)
   rightClusters.sort((a, b) => b.count - a.count)
   const rightColor = rightClusters.length > 0 ? rgbToHex(rightClusters[0].averageRgb) : primaryColor
-
+  console.timeEnd('autohue-time');
   return {
     primaryColor,
     secondaryColor,

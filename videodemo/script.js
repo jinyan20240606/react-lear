@@ -1,3 +1,5 @@
+import GaussianFilter from './gaussian';
+
 document.addEventListener('DOMContentLoaded', function() {
     // 获取DOM元素
     const videoPlayer = document.getElementById('videoPlayer');
