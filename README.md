@@ -7,9 +7,13 @@
 
 ## babel知识补充
 
+> 官方文档的插件开发教程：https://github.com/jamiebuilds/babel-handbook/blob/master/translations/zh-Hans/plugin-handbook.md
+> > 快速熟悉参考：https://juejin.cn/post/7165912843315839012
 
-> 快速熟悉参考：https://juejin.cn/post/7165912843315839012
 > 对应项目练习见`babel-prac`文件夹
+
+### 插件开发
+1. 插件开发相关api可以参考@babel/traverse即babel-traverse包，@babel/types 包也就是babel-types包的类型定义，好像没有专门的api文档
 
 
 ### 插件开发相关概念
