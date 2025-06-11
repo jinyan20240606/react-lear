@@ -8,7 +8,7 @@
  *    - transform-react-jsx：用于转换 JSX 到 React.createElement 的调用。
  *    - transform-react-jsx-development：用于开发环境下的 JSX 转换，包含了额外的错误检查和调试信息。
  *    - transform-react-display-name：用于为组件添加 displayName 属性，方便调试和错误报告。
- *    - transform-react-pure-annotations：用于添加 @pure 注解到函数组件，以提高性能。
+ *    - transform-react-pure-annotations：用于添加 @pure 注解到纯组件标记，以提高性能。
  */
 // @ts-nocheck
 // 导入必要的Babel工具和插件
@@ -32,7 +32,7 @@ export interface Options {
   useSpread?: boolean; // 指定是否使用展开运算符
 }
 
-// 导出默认预设主体函数
+// 导出默认预设主体函数(创建预设：https://www.babeljs.cn/docs/presets#%E5%88%9B%E5%BB%BA%E9%A2%84%E8%AE%BE)
 export default declarePreset((api, opts: Options) => {
   // 断言Babel版本必须>=7
   api.assertVersion(REQUIRED_VERSION(7));

@@ -4,7 +4,9 @@ const App = /*#__PURE__*/React.createElement("h1", {
   onClick: () => {}
 }, "this is a H1 Tag");
 function FnComp() {
-  return /*#__PURE__*/React.createElement("div", null, "A Function Component");
+  return /*#__PURE__*/React.createElement("div", {
+    jsx11: /*#__PURE__*/React.createElement("div", null)
+  }, "A Function Component");
 }
 class ClassComp extends React.Component {
   render() {

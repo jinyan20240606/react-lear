@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom/client';
 const App = <h1 onClick={()=>{}}>this is a H1 Tag</h1>
 
 function FnComp(){
-    return <div>A Function Component</div>
+    return <div jsx11={<div></div>}>A Function Component</div>
   }
 class ClassComp extends React.Component{
     render(){

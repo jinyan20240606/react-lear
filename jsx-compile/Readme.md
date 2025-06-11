@@ -19,7 +19,7 @@
 ## babel编译jsx原理
 
 > 参考https://juejin.cn/post/7186132321219641400
-> 见preset-react文件夹
+> 见preset-react-sourcecode文件夹
 
 1. babel对于react16版本17版本后，新旧版本转换jsx的逻辑稍有不同：https://juejin.cn/post/7121397773911457822?from=search-suggest
    1. 官网中提到：目前，旧的转换的默认选项为 {"runtime": "classic"}。如需启用新的转换，你可以使用 {"runtime": "automatic"} 作为 @babel/plugin-transform-react-jsx 或 @babel/preset-react 的选项

@@ -1,3 +1,5 @@
 {
-  "plugins": ["./test-plugin/plugin"]
+  "plugins": [["./test-plugin/plugin", {
+    "name":"jinyan1"
+  }]]
 }
