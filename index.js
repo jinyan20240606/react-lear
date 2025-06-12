@@ -56,10 +56,10 @@ function render(element, container) {
 }
 
 /**
- * 4. 为了组件工作单元，我们需要将上面render里的element数据结构改变为一个新的数据结构：fiber树结构（链表型siblingreturnchild...）
+ * 4. 为了组建工作单元，我们需要将上面render里的element数据结构改变为一个新的数据结构：fiber树结构（链表型siblingreturnchild...）
  *  4-1、每一个元素都是fibr节点，每个fiber节点都对应一个工作单元
  *
- *  4-2. 在渲染中，我们将从根节点开始创建根光纤，并将其设置为初始nextUnitOfWork。剩下的工作将发生在performUnitOfWork函数上，在那里我们将为每个光纤做三件事:
+ *  4-2. 在渲染中，我们将从根节点开始创建根fiber，并将其设置为初始nextUnitOfWork。剩下的工作将发生在performUnitOfWork函数上，在那里我们将为每个光纤做三件事:
  *      a、将元素添加到DOM中
         b、为元素的子元素创建fiber节点
         c、返回下一个工作单元
@@ -127,6 +127,7 @@ function workLoop(deadline) {
   requestIdleCallback(workLoop);
 }
 
+// 浏览器空闲事件，仿造react的调度器实现
 requestIdleCallback(workLoop);
 
 /**

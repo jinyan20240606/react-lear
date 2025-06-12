@@ -10,8 +10,9 @@
   <body>
     <div id="root"></div>
     <script>
-      // JSX结构
-      //   const element1 = (
+      // JSX结构----用这个注释最终babel插件转化成下面element2的结构
+      /** @jsx MyReact.createElement */
+      //   const element2 = (
       //     <div id="foo">
       //       <a>我的迷你react</a>
       //       <b />
@@ -20,11 +21,11 @@
       const element2 = MyReact.createElement(
         "div",
         { id: "foo" },
-        MyReact.createElement("a", null, "我的迷你react"),
+        MyReact.createElement("a", null, "我的迷你react1"),
         MyReact.createElement("b")
       );
 
-      MyReact.concurrentRender2(element2, document.getElementById("root"));
+      MyReact.render(element2, document.getElementById("root"));
     </script>
   </body>
 </html>
