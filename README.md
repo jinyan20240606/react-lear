@@ -108,7 +108,7 @@
 
 ### 整体架构分层
 
-> 整体架构分层概览图：https://7km.top/main/macro-structure
+> 整体架构分层概览图：(./imgs/宏观架构图.png) https://7km.top/main/macro-structure 
 
 **按包名即功能划分的层：**
 - React15 架构可以分为两层--按包名划分的层：
