@@ -25,7 +25,32 @@
         MyReact.createElement("b")
       );
 
-      MyReact.render(element2, document.getElementById("root"));
+      const element3 = MyReact.createElement(
+        "div",
+        {
+          id: "foo",
+        },
+        MyReact.createElement("")
+        MyReact.createElement(
+          "a-span",
+          {
+            id: "barjybg",
+            className:"bozju",
+            style: {
+              color: 'red',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              backgroundColor: 'yellow',
+              backgroundClip: 'content-box',
+              width: "120px",
+              height: "240px",
+              maxWidth: "300px",
+            }
+          }
+        )
+      )
+      MyReact.render(element2, document.getElementById("root1"));
+      MyReact.render(element2, document.getElementById("root333---jinyn"));
     </script>
   </body>
 </html>

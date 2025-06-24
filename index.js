@@ -59,7 +59,9 @@ function render(element, container) {
  * 4. 为了组建工作单元，我们需要将上面render里的element数据结构改变为一个新的数据结构：fiber树结构（链表型siblingreturnchild...）
  *  4-1、每一个元素都是fibr节点，每个fiber节点都对应一个工作单元
  *
- *  4-2. 在渲染中，我们将从根节点开始创建根fiber，并将其设置为初始nextUnitOfWork。剩下的工作将发生在performUnitOfWork函数上，在那里我们将为每个光纤做三件事:
+ *  4-2. 在渲染中，我们将从根节点开始创建根fiber，并将其设置为初始nextUnitOfWork。剩下的工作将发生在performUnitOfWork函数上，
+ * 
+ * 在那里我们将为每个光纤做三件事:
  *      a、将元素添加到DOM中
         b、为元素的子元素创建fiber节点
         c、返回下一个工作单元
@@ -97,6 +99,7 @@ function concurrentRender(element, container) {
     props: {
       children: [element],
     },
+    // 此时没有child属性
   };
 }
 
@@ -116,6 +119,7 @@ function workLoop(deadline) {
   let shouldYield = false;
   while (nextUnitOfWork && !shouldYield) {
     nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
+    // 小于1毫秒，说明需要中断下，让出执行权，让浏览器有时间处理其他任务
     shouldYield = deadline.timeRemaining() < 1;
   }
   // 一旦我们完成了所有的工作(我们知道这一点，因为没有下一个工作单元)，我们就将整个fiber树提交给专门的批量DOM操作方法-----即不让他在performUnitOfWork中串行的操作dom了。
@@ -225,14 +229,18 @@ function commitWork(fiber) {
 //     2. 重构：在这里协调新旧元素，尽可能的复用已有的节点，最后产出新旧混合的新fiber树
 /**
  * 协调思路：
- * 1. 同时遍历2个数据结构：旧fiber树的子树链表 和 新的jsx对应的elements元素数组
+ * 1. 同时遍历2个数据结构：旧fiber树的子树链表 和 新的jsx对应的reactElements元素数组
+ * 
+ * 1参：是fiber节点
+ * 2参：是element子元素数组，待更新到页面上的
+ * 
  */
 function reconcileChildren(wipFiber, elements) {
   let index = 0;
   let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
   let prevSibling = null;
 
-  // 0. 同时遍历
+  // 0. 同时遍历，以elements数组为基准遍历
   while (index < elements.length || oldFiber != null) {
     const element = elements[index];
     let newFiber = null;
@@ -346,6 +354,7 @@ function updateHostComponent(fiber) {
   if (!fiber.dom) {
     fiber.dom = createDom(fiber);
   }
+  // 1参是fiber节点 2参是element子元素数组，待更新到页面上的
   reconcileChildren(fiber, fiber.props.children);
 }
 
